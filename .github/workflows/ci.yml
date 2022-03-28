@@ -7,7 +7,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
       - uses: actions/checkout@v1
       - name: Login to Heroku Container registry
         env:
