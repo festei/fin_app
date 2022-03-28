@@ -2,7 +2,7 @@
 from summa import summarizer
 import streamlit as st
 # Add title to the page.
-st.title("Text summarization")
+st.title("FINANCE DASHBOARD")
 # Ask user for input text.
 input_sent = st.text_area("Input Text", "", height=400)
 # User input on what fraction of the original text to return.
