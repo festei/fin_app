@@ -1,0 +1,2 @@
+streamlit==1.8.0
+summa==1.2.0
