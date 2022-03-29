@@ -1,23 +1,16 @@
 #!/usr/bin/env python
 import streamlit as st
-import sys
-from streamlit import cli as stcli
-import os
+import requests
+import pandas as pd
 
 # Add title to the page.
 st.title("FINANCE DASHBOARD")
-# Ask user for input text.
-input_sent = st.text_area("Input Text", "", height=400)
-# User input on what fraction of the original text to return.
-ratio = st.slider(
-    "Summarization fraction",
-    min_value=0.0,
-    max_value=1.0,
-    value=0.2,
-    step=0.01)
-# Summarize the original text.
-# Print out the results.
-st.write(input_sent)
+
+if st.button(label='Select Data'):
+    r = requests.get("https://gentle-caverns-79193.herokuapp.com/get_income_data")
+    data = pd.DataFrame(r.json())
+    st.dataframe(data)
+    st.write("Data select successfully!")
 
 
 # if __name__ == '__main__':
