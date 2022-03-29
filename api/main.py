@@ -17,6 +17,4 @@ async def get_income_data() -> income_data:
 
 
 if __name__ == '__main__':
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ["SERVER_PORT"]))
-
-
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ["PORT"]))

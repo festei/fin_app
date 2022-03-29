@@ -1,6 +1,9 @@
 #!/usr/bin/env python
-from summa import summarizer
 import streamlit as st
+import sys
+from streamlit import cli as stcli
+import os
+
 # Add title to the page.
 st.title("FINANCE DASHBOARD")
 # Ask user for input text.
@@ -15,3 +18,8 @@ ratio = st.slider(
 # Summarize the original text.
 # Print out the results.
 st.write(input_sent)
+
+
+# if __name__ == '__main__':
+    # sys.argv = ["streamlit", "run", "app.py", "--server.port", str(os.environ["PORT"])]
+    # sys.exit(stcli.main())
