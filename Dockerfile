@@ -1,18 +1,8 @@
 FROM python:3.8
-
+EXPOSE 8501
 WORKDIR /app
+COPY requirements.txt ./requirements.txt
+RUN pip3 install -r requirements.txt
+COPY . .
 
-COPY ./requirements.txt /app/requirements.txt
-
-RUN pip install --upgrade pip
-RUN pip install --no-cache-dir --upgrade -r /app/requirements.txt
-
-COPY ./api .
-
-ENV POSTGRES_USER=$POSTGRES_USER
-ENV POSTGRES_PASSWORD=$POSTGRES_PASSWORD
-ENV POSTGRES_DB=$POSTGRES_DB
-ENV POSTGRES_HOST=$POSTGRES_HOST
-ENV POSTGRES_PORT=$POSTGRES_PORT
-
-CMD [ "python", "./main.py"]
+CMD streamlit run --server.port $PORT app.py
