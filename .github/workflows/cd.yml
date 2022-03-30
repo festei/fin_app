@@ -10,9 +10,26 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v2
-      - name: Build, Push and Deploy FRONTEND #set the whatever name you want to this step
-        id: heroku_frontend
-        uses: jctaveras/heroku-deploy@v1.0.0  # use the latest version of the action
+      - name: Build, Push and Deploy to FRONTEND
+        id: heroku_front
+        uses: Techmmunity/docker-heroku-deploy@v1.0.0 # use the latest version of the action
+        with:
+          email: ${{ secrets.HEROKU_EMAIL }} # your heroku email
+          api_key: ${{ secrets.HEROKU_API_KEY }} # your  heroku api key
+          app_name: ${{ secrets.HEROKU_APP_NAME }} # you aplication name
+          dockerfile_path: "." # OPTIONAL: set the path to the folder wher the Dockerfile.front is located, the default is the rootDir
+          dockerfile_name: "Dockerfile.front" # OPTIONAL: Custom name to your dockerfile, like Dockerfile.front.dev
+          options: "" # OPTIONAL: Docker Build Options
+          formation: "web" # OPTIONAL: Docker Dyno Formation. By default is web
+
+  build_backend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Build, Push and Deploy to BACKEND
+        id: heroku_back
+        uses: Techmmunity/docker-heroku-deploy@v1.0.0 # use the latest version of the action
         env:
           POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
           POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
@@ -22,24 +39,8 @@ jobs:
         with:
           email: ${{ secrets.HEROKU_EMAIL }} # your heroku email
           api_key: ${{ secrets.HEROKU_API_KEY }} # your  heroku api key
-          app_name: ${{ secrets.HEROKU_APP_NAME }} # you aplication name
-          dockerfile: "Dockerfile.front"
-          options: ''
-          formation: 'web'
-
-  build_backend:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v2
-      - name: Build, Push and Deploy to BACKEND
-        id: heroku
-        uses: Techmmunity/docker-heroku-deploy@v1.0.0 # use the latest version of the action
-        with:
-          email: ${{ secrets.HEROKU_EMAIL }} # your heroku email
-          api_key: ${{ secrets.HEROKU_API_KEY }} # your  heroku api key
           app_name: ${{ secrets.HEROKU_APP_BACKEND}} # you aplication name
           dockerfile_path: "." # OPTIONAL: set the path to the folder wher the Dockerfile.front is located, the default is the rootDir
-          dockerfile_name: "Dockerfile.front.api" # OPTIONAL: Custom name to your dockerfile, like Dockerfile.front.dev
+          dockerfile_name: "Dockerfile.api" # OPTIONAL: Custom name to your dockerfile, like Dockerfile.front.dev
           options: "" # OPTIONAL: Docker Build Options
           formation: "web" # OPTIONAL: Docker Dyno Formation. By default is web
