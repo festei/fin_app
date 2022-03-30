@@ -13,64 +13,41 @@ jobs:
         with:
           fetch-depth: 0
       - name: Heroku login credentials
+        run: |
+          cat > ~/.netrc <<EOF
+            machine api.heroku.com
+              login $HEROKU_EMAIL
+              password $HEROKU_API_KEY
+            machine git.heroku.com
+              login $HEROKU_EMAIL
+              password $HEROKU_API_KEY
+          EOF
         env:
           HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
           HEROKU_EMAIL: ${{ secrets.HEROKU_EMAIL }}
-        run: heroku login
-
-#          cat > ~/.netrc <<EOF
-#            machine api.heroku.com
-#              login $HEROKU_EMAIL
-#              password $HEROKU_API_KEY
-#            machine git.heroku.com
-#              login $HEROKU_EMAIL
-#              password $HEROKU_API_KEY
-#          EOF
-#        env:
-#          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
-#          HEROKU_EMAIL: ${{ secrets.HEROKU_EMAIL }}
       - name: Login to Heroku Container registry
         env:
           HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
         run: heroku container:login
-#      - name: Build, push and deploy backend to heroku
-#        env:
-#          CONTAINER_SECRET: ${{ secrets.CONTAINER_SECRET }}
-#          CONTAINER_REGISTRY: ${{ secrets.CONTAINER_REGISTRY }}
-#          CONTAINER_USERNAME: ${{ secrets.CONTAINER_USERNAME }}
-#        run: |
-#          export REFNAME=$(echo $GITHUB_REF | cut -d '/' -f 3)
-#          echo $CONTAINER_SECRET | docker login -u $CONTAINER_USERNAME --password-stdin https://$CONTAINER_REGISTRY
-#          doBuild()
-#          {
-#            name=$1
-#            dockerfile=$2
-#            app_name=$3
-#            echo "building $name"
-#            pwd
-#            ls
-#            containerName="${name}"
-#            containerNameVtag="${name}:${REFNAME}"
-#            docker build . --file $dockerfile --tag $CONTAINER_REGISTRY/$containerName
-#            docker tag $CONTAINER_REGISTRY/$containerName $CONTAINER_REGISTRY/$containerNameVtag
-#            docker push -a $CONTAINER_REGISTRY/$containerName
-#          }
-#
-#          doBuild "cp_screen" "Dockerfile.cp_screen";
+      - name: Build, push and deploy backend to heroku
+        env:
+          CONTAINER_SECRET: ${{ secrets.CONTAINER_SECRET }}
+          CONTAINER_REGISTRY: ${{ secrets.CONTAINER_REGISTRY }}
+          CONTAINER_USERNAME: ${{ secrets.CONTAINER_USERNAME }}
+        run: |
+          doBuild()
+          {
+            name=$1
+            dockerfile=$2
+            app_name=$3
+            proc_type=$4
+            echo "building $name"
+            pwd
+            ls
+            containerName="${name}"
+            docker build . --file $dockerfile --tag $CONTAINER_REGISTRY/$containerName
+            docker tag $CONTAINER_REGISTRY/$containerName $CONTAINER_REGISTRY/$app_name/$proc_type
+            docker push $CONTAINER_REGISTRY/$app_name/$proc_type
+          }
 
-#  build_frontend:
-#    runs-on: ubuntu-latest
-#    steps:
-#      - name: Checkout
-#        uses: actions/checkout@v2
-#      - name: Build, Push and Deploy to FRONTEND
-#        id: heroku_front
-#        uses: Techmmunity/docker-heroku-deploy@v1.0.0 # use the latest version of the action
-#        with:
-#          email: ${{ secrets.HEROKU_EMAIL }} # your heroku email
-#          api_key: ${{ secrets.HEROKU_API_KEY }} # your  heroku api key
-#          app_name: ${{ secrets.HEROKU_APP_NAME }} # you aplication name
-#          dockerfile_path: "." # OPTIONAL: set the path to the folder wher the Dockerfile.front is located, the default is the rootDir
-#          dockerfile_name: "Dockerfile.front" # OPTIONAL: Custom name to your dockerfile, like Dockerfile.front.dev
-#          options: "" # OPTIONAL: Docker Build Options
-#          formation: "web" # OPTIONAL: Docker Dyno Formation. By default is web
+          doBuild "ui" "Dockerfile.front" "gentle-caverns-79193" "web";
