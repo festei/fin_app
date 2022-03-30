@@ -1,23 +1,23 @@
-name: Build Docker images and deploy to Heroku
-on:
-  push:
-    branches:
-    - develop
-
-jobs:
-  build_frontend:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v2
-      - name: Build, Push and Deploy to FRONTEND
-        id: heroku_front
-        uses: Techmmunity/docker-heroku-deploy@v1.0.0 # use the latest version of the action
-        with:
-          email: ${{ secrets.HEROKU_EMAIL }} # your heroku email
-          api_key: ${{ secrets.HEROKU_API_KEY }} # your  heroku api key
-          app_name: ${{ secrets.HEROKU_APP_NAME }} # you aplication name
-          dockerfile_path: "." # OPTIONAL: set the path to the folder wher the Dockerfile.front is located, the default is the rootDir
-          dockerfile_name: "Dockerfile.front" # OPTIONAL: Custom name to your dockerfile, like Dockerfile.front.dev
-          options: "" # OPTIONAL: Docker Build Options
-          formation: "web" # OPTIONAL: Docker Dyno Formation. By default is web
+#name: Build Docker images and deploy to Heroku
+#on:
+#  push:
+#    branches:
+#    - develop
+#
+#jobs:
+#  build_frontend:
+#    runs-on: ubuntu-latest
+#    steps:
+#      - name: Checkout
+#        uses: actions/checkout@v2
+#      - name: Build, Push and Deploy to FRONTEND
+#        id: heroku_front
+#        uses: Techmmunity/docker-heroku-deploy@v1.0.0 # use the latest version of the action
+#        with:
+#          email: ${{ secrets.HEROKU_EMAIL }} # your heroku email
+#          api_key: ${{ secrets.HEROKU_API_KEY }} # your  heroku api key
+#          app_name: ${{ secrets.HEROKU_APP_NAME }} # you aplication name
+#          dockerfile_path: "." # OPTIONAL: set the path to the folder wher the Dockerfile.front is located, the default is the rootDir
+#          dockerfile_name: "Dockerfile.front" # OPTIONAL: Custom name to your dockerfile, like Dockerfile.front.dev
+#          options: "" # OPTIONAL: Docker Build Options
+#          formation: "web" # OPTIONAL: Docker Dyno Formation. By default is web
