@@ -11,7 +11,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v2
       - name: Build, Push and Deploy Frontend #set the whatever name you want to this step
-        id: heroku
+        id: heroku_frontend
         uses: jctaveras/heroku-deploy@v1.0.0  # use the latest version of the action
         env:
           POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
@@ -27,7 +27,7 @@ jobs:
           options: ''
           formation: 'web'
       - name: Build, Push and Deploy BACKEND #set the whatever name you want to this step
-        id: heroku
+        id: heroku_backend
         uses: jctaveras/heroku-deploy@v1.0.0  # use the latest version of the action
         env:
           POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
