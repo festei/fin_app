@@ -1,8 +1,24 @@
 FROM python:3.8
+
 EXPOSE 8501
+
 WORKDIR /app
+
 COPY requirements.txt ./requirements.txt
+
 RUN pip3 install -r requirements.txt
+
 COPY . .
+
+ARG user
+ENV POSTGRES_USER=$user
+ARG pwd
+ENV POSTGRES_PASSWORD=$pwd
+ARG db
+ENV POSTGRES_DB=$db
+ARG host
+ENV POSTGRES_HOST=$host
+ARG port
+ENV POSTGRES_PORT=$port
 
 CMD streamlit run --server.port $PORT app.py

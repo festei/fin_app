@@ -50,7 +50,11 @@ jobs:
             pwd
             ls
             containerName="${name}"
-            docker build . --file $dockerfile --tag $CONTAINER_REGISTRY/$containerName
+            docker build . --file $dockerfile --tag $CONTAINER_REGISTRY/$containerName --build-arg user=POSTGRES_USER \
+                                                                                       --build-arg pwd=POSTGRES_PASSWORD \
+                                                                                       --build-arg db=POSTGRES_DB \
+                                                                                       --build-arg host=POSTGRES_HOST \
+                                                                                       --build-arg port=POSTGRES_PORT \
             docker tag $CONTAINER_REGISTRY/$containerName $CONTAINER_REGISTRY/$app_name/$proc_type
             docker push $CONTAINER_REGISTRY/$app_name/$proc_type
           }
