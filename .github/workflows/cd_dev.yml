@@ -10,7 +10,7 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v2
-      - name: Build, Push and Deploy Frontend #set the whatever name you want to this step
+      - name: Build, Push and Deploy FRONTEND #set the whatever name you want to this step
         id: heroku_frontend
         uses: jctaveras/heroku-deploy@v1.0.0  # use the latest version of the action
         env:
