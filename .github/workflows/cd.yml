@@ -25,6 +25,10 @@ jobs:
         env:
           HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
           HEROKU_EMAIL: ${{ secrets.HEROKU_EMAIL }}
+      - name: Login to Heroku Container registry
+        env:
+          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+        run: heroku container:login
 #      - name: Build, push and deploy backend to heroku
 #        env:
 #          CONTAINER_SECRET: ${{ secrets.CONTAINER_SECRET }}
