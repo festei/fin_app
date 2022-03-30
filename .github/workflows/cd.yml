@@ -5,7 +5,7 @@ on:
     - develop
 
 jobs:
-  build_frontend:
+  build_application:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
