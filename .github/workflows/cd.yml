@@ -34,6 +34,11 @@ jobs:
           CONTAINER_SECRET: ${{ secrets.CONTAINER_SECRET }}
           CONTAINER_REGISTRY: ${{ secrets.CONTAINER_REGISTRY }}
           CONTAINER_USERNAME: ${{ secrets.CONTAINER_USERNAME }}
+          POSTGRES_USER : ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD : ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_DB : ${{ secrets.POSTGRES_DB }}
+          POSTGRES_HOST : ${{ secrets.POSTGRES_HOST }}
+          POSTGRES_PORT : ${{ secrets.POSTGRES_PORT }}
         run: |
           doBuild()
           {
@@ -51,3 +56,7 @@ jobs:
           }
 
           doBuild "ui" "Dockerfile.front" "gentle-caverns-79193" "web";
+      - name: Release new version of container
+        env:
+          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+        run: heroku container:login
