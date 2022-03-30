@@ -55,15 +55,15 @@ jobs:
             docker push $CONTAINER_REGISTRY/$app_name/$proc_type
           }
 
-          doBuild "ui" "Dockerfile.front" "gentle-caverns-79193" "web";
+          doBuild "ui" "Dockerfile.api" "gentle-caverns-79193" "web";
       - name: Release new version of container
         env:
           HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
         run: |
           doRelease()
           {
-            app_name=$3
-            proc_type=$4
+            app_name=$1
+            proc_type=$2
             heroku container:release $proc_type --app $app_name
           }
 
