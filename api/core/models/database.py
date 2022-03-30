@@ -6,7 +6,7 @@ import os
 #Define database engine
 URI = "postgresql://" + os.environ["POSTGRES_USER"] + \
                           ":" + os.environ["POSTGRES_PASSWORD"] + "@" + os.environ["POSTGRES_HOST"] + \
-                          ":" + os.environ["POSTGRES_PORT"] + "/" + os.environ["POSTGRES_DB"]
+                          ":" + str(os.environ["POSTGRES_PORT"]) + "/" + os.environ["POSTGRES_DB"]
 engine = sal.create_engine(URI)
 
 #Define database model
