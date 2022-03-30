@@ -64,7 +64,7 @@ jobs:
           {
             app_name=$1
             proc_type=$2
-            heroku container:release $proc_type --app $app_name
+            heroku container:release --app $app_name $proc_type
           }
 
-          doRelease "web" "gentle-caverns-79193"
+          doRelease "gentle-caverns-79193" "web"
