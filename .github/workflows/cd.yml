@@ -59,4 +59,12 @@ jobs:
       - name: Release new version of container
         env:
           HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
-        run: heroku container:login
+        run: |
+          doRelease()
+          {
+            app_name=$3
+            proc_type=$4
+            heroku container:release $proc_type --app $app_name
+          }
+
+          doRelease "web" "gentle-caverns-79193"
