@@ -4,7 +4,7 @@ import requests
 import pandas as pd
 
 # Add title to the page.
-st.title("FINANCE DASHBOARD")
+st.title("DASHBOARD")
 
 if st.button(label='Select Data'):
     r = requests.get("https://gentle-caverns-79193.herokuapp.com/get_income_data")
