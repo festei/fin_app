@@ -12,7 +12,8 @@ jobs:
         uses: actions/checkout@v2
         with:
           fetch-depth: 0
-      - name: Heroku login credentials
+
+      - name: Login
         run: |
           cat > ~/.netrc <<EOF
             machine api.heroku.com
@@ -25,11 +26,13 @@ jobs:
         env:
           HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
           HEROKU_EMAIL: ${{ secrets.HEROKU_EMAIL }}
-      - name: Login to Heroku Container registry
+
+      - name: Login Registry
         env:
           HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
         run: heroku container:login
-      - name: Build, push and deploy backend to heroku
+
+      - name: Build and push image
         env:
           CONTAINER_SECRET: ${{ secrets.CONTAINER_SECRET }}
           CONTAINER_REGISTRY: ${{ secrets.CONTAINER_REGISTRY }}
