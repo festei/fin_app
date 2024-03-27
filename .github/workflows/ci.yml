@@ -3,7 +3,7 @@ name: Commitizen and Git Actions
 on:
   push:
     branches:
-      - test_cicd_3
+      - main
 
 jobs:
   commitizen:
