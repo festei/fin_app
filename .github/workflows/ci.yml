@@ -3,7 +3,7 @@ name: Commitizen and Git Actions
 on:
   push:
     branches:
-      - main
+      - test_cicd_3
 
 jobs:
   commitizen:
@@ -35,14 +35,14 @@ jobs:
       run: |
         git config --global user.email "you@example.com"
         git config --global user.name "Your Name"
-        exists=`git show-ref refs/heads/main`
-        if [ -n "$exists" ]; then git branch -D main; fi
-        git checkout -b main
+        exists=`git show-ref refs/heads/test_cicd_3`
+        if [ -n "$exists" ]; then git branch -D test_cicd_3; fi
+        git checkout -b test_cicd_3
         git fetch --tags
         git tag --list
         cz bump --yes
-        git branch --set-upstream-to=origin/main main
-        git push origin main:$GITHUB_REF
+        git branch --set-upstream-to=origin/test_cicd_3 test_cicd_3
+        git push origin test_cicd_3:$GITHUB_REF
         TAG=$(head -n 1 VERSION)
         echo "export TAG='$TAG'" >> variables
         git push origin $TAG
