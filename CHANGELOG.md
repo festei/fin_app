@@ -1,3 +1,10 @@
+## 1.1.0 (2024-03-27)
+
+### Feat
+
+- test
+- try out new pipeline version
+
 ## 1.0.1 (2024-03-27)
 
 ### Fix
