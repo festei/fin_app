@@ -34,6 +34,7 @@ jobs:
     - name: Create and push new branch
       run: |
         git checkout -b test_cicd_3
+        git fetch --tags
         cz bump --yes
         git push origin test_cicd_3:$GITHUB_REF
         TAG=$(head -n 1 VERSION)
