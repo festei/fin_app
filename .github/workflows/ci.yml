@@ -37,6 +37,7 @@ jobs:
         git config --global user.name "Your Name"
         git checkout -b test_cicd_3
         git fetch --tags
+        git tag --list
         cz bump --yes
         git branch --set-upstream-to=origin/test_cicd_3 test_cicd_3
         git push origin test_cicd_3:$GITHUB_REF
