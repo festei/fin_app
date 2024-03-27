@@ -26,10 +26,10 @@ jobs:
     - name: Install Commitizen
       run: pip3 install -U Commitizen
 
-    - name: Configure Git
-      run: |
-        exists=`git show-ref refs/heads/test_cicd_3`
-        if [ -n "$exists" ]; then git branch -D test_cicd_3; fi
+    # - name: Configure Git
+    #   run: |
+    #     exists=`git show-ref refs/heads/test_cicd_3`
+    #     if [ -n "$exists" ]; then git branch -D test_cicd_3; fi
 
     - name: Create and push new branch
       run: |
