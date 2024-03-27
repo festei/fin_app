@@ -28,16 +28,14 @@ jobs:
 
     - name: Configure Git
       run: |
-        # git remote set-url origin git@gitlab.com:discover/rentee-core.git
-        # git config --global user.email "${CI_EMAIL}" && git config --global user.name "${CI_USERNAME}"
-        exists=`git show-ref refs/heads/master`
-        if [ -n "$exists" ]; then git branch -D master; fi
+        exists=`git show-ref refs/heads/main`
+        if [ -n "$exists" ]; then git branch -D main; fi
 
     - name: Create and push new branch
       run: |
-        git checkout -b master
+        git checkout -b main
         cz bump --yes
-        git push origin master:$GITHUB_REF
+        git push origin main:$GITHUB_REF
         TAG=$(head -n 1 VERSION)
         echo "export TAG='$TAG'" >> variables
         git push origin $TAG
