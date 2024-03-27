@@ -1,3 +1,9 @@
+## 1.0.1 (2024-03-27)
+
+### Fix
+
+- adjust bump message
+
 ## 1.0.0 (2024-03-27)
 
 ### BREAKING CHANGE
