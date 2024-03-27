@@ -1,22 +1,43 @@
-name: Build Docker image and deploy to Heroku
+name: Commitizen and Git Actions
+
 on:
   push:
     branches:
-    - main
+      - main
+
 jobs:
-  build:
+  commitizen:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v1
-      - name: Login to Heroku Container registry
-        env:
-          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
-        run: heroku container:login
-      - name: Build and push
-        env:
-          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
-        run: heroku container:push web --app vast-sea-49086
-      - name: Release
-        env:
-          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
-        run: heroku container:release web --app vast-sea-49086
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    # - name: Setup SSH
+    #   run: |
+    #     which ssh-agent || ( apt-get update -qy && apt-get install openssh-client -qqy )
+    #     eval `ssh-agent -s`
+    #     echo "${SSH_PRIVATE_KEY}" | tr -d '\r' | ssh-add - > /dev/null
+    #     mkdir -p ~/.ssh
+    #     chmod 700 ~/.ssh
+    #     echo "$SSH_PUBLIC_KEY" >> ~/.ssh/id_rsa.pub
+    #     '[[ -f /.dockerenv ]] && echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config'
+
+    - name: Install Commitizen
+      run: pip3 install -U Commitizen
+
+    - name: Configure Git
+      run: |
+        # git remote set-url origin git@gitlab.com:discover/rentee-core.git
+        # git config --global user.email "${CI_EMAIL}" && git config --global user.name "${CI_USERNAME}"
+        exists=`git show-ref refs/heads/master`
+        if [ -n "$exists" ]; then git branch -D master; fi
+
+    - name: Create and push new branch
+      run: |
+        git checkout -b master
+        cz bump --yes
+        git push origin master:$GITHUB_REF
+        TAG=$(head -n 1 VERSION)
+        echo "export TAG='$TAG'" >> variables
+        git push origin $TAG
