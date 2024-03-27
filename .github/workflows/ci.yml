@@ -35,10 +35,11 @@ jobs:
       run: |
         git config --global user.email "you@example.com"
         git config --global user.name "Your Name"
+        git pull origin main
+        git branch -D main
         git checkout -b main
         git fetch --tags
         git tag --list
-        git pull origin main
         cz bump --yes
         git branch --set-upstream-to=origin/main main
         git push origin main:$GITHUB_REF
