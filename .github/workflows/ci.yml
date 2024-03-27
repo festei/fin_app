@@ -35,7 +35,7 @@ jobs:
       run: |
         git config --global user.email "you@example.com"
         git config --global user.name "Your Name"
-        exists=`git show-ref refs/heads/test_cicd_3`
+        exists=`git show-ref /home/runner/work/fin_app/fin_app/test_cicd_3`
         if [ -n "$exists" ]; then git branch -D test_cicd_3; fi
         git checkout -b test_cicd_3
         git fetch --tags
