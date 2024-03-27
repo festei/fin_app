@@ -35,6 +35,8 @@ jobs:
       run: |
         git config --global user.email "you@example.com"
         git config --global user.name "Your Name"
+        exists=`git show-ref refs/heads/main`
+        if [ -n "$exists" ]; then git branch -D main; fi
         git checkout -b main
         git fetch --tags
         git tag --list
