@@ -1,3 +1,9 @@
+## 1.2.0 (2024-03-27)
+
+### Feat
+
+- This is a new feature which introduces a couple of aspects including adding new tags as well as adjusting the changelog automatically
+
 ## 1.1.4 (2024-03-27)
 
 ### Fix
