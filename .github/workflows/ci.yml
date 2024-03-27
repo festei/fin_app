@@ -33,6 +33,8 @@ jobs:
 
     - name: Create and push new branch
       run: |
+        git config --global user.email "you@example.com"
+        git config --global user.name "Your Name"
         git checkout -b test_cicd_3
         git fetch --tags
         cz bump --yes
