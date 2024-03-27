@@ -5,5 +5,3 @@ echo 'Versioning the application'
 git checkout -b test_cicd_3
 cz bump --yes # execute auto bump and push to master
 TAG=$(head -n 1 VERSION) # get the new software version and save into artifacts
-echo "#!/bin/sh" >> variables
-echo "export TAG='$TAG'" >> variables
