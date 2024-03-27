@@ -28,14 +28,14 @@ jobs:
 
     - name: Configure Git
       run: |
-        exists=`git show-ref refs/heads/main`
-        if [ -n "$exists" ]; then git branch -D main; fi
+        exists=`git show-ref refs/heads/test_cicd_3`
+        if [ -n "$exists" ]; then git branch -D test_cicd_3; fi
 
     - name: Create and push new branch
       run: |
-        git checkout -b main
+        git checkout -b test_cicd_3
         cz bump --yes
-        git push origin main:$GITHUB_REF
+        git push origin test_cicd_3:$GITHUB_REF
         TAG=$(head -n 1 VERSION)
         echo "export TAG='$TAG'" >> variables
         git push origin $TAG
