@@ -44,3 +44,4 @@ jobs:
         TAG=$(head -n 1 VERSION)
         echo "export TAG='$TAG'" >> variables
         git push origin $TAG
+
