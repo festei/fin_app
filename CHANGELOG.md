@@ -1,3 +1,9 @@
+## 2.0.0 (2024-03-27)
+
+### BREAKING CHANGE
+
+- this is revolutionary
+
 ## 1.2.0 (2024-03-27)
 
 ### Feat
