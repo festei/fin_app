@@ -11,5 +11,4 @@ git branch --set-upstream-to=origin/main main
 git push origin main:$GITHUB_REF
 
 TAG=$(git describe --tags $(git rev-list --tags --max-count=1))
-echo "export TAG='$TAG'" >> variables
 git push origin $TAG
