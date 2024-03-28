@@ -1,3 +1,9 @@
+## 2.1.0 (2024-03-28)
+
+### Feat
+
+- pin down commitizen version
+
 ## 2.0.0 (2024-03-27)
 
 ### BREAKING CHANGE
