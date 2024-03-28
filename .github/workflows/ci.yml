@@ -27,7 +27,7 @@ jobs:
 
         bump_output=$(cz bump --yes)
 
-        if [[ $bump_output == *"[NO_COMMITS_TO_BUMP]"* ]]; then
+        if [[ $bump_output == *"[NO_COMMITS_TO_BUMP] The commits found are not eligible to be bumped"* ]]; then
             # [NO_COMMITS_TO_BUMP] message detected
             echo "No commits to bump. Skipping versioning."
         else
