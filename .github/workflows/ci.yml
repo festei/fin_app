@@ -25,7 +25,7 @@ jobs:
         git checkout main
         git fetch --tags
 
-        bump_output = $(cz bump --yes)
+        bump_output=$(cz bump --yes)
 
         if [[ $bump_output == *"[NO_COMMITS_TO_BUMP]"* ]]; then
             # [NO_COMMITS_TO_BUMP] message detected
