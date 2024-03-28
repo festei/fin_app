@@ -1,7 +1,15 @@
  #!/bin/sh
 
 echo 'Versioning the application'
-'exists=`git show-ref refs/heads/test_cicd_3` && if [ -n "$exists" ]; then git branch -D test_cicd_3; fi'
-git checkout -b test_cicd_3
-cz bump --yes # execute auto bump and push to master
-TAG=$(head -n 1 VERSION) # get the new software version and save into artifacts
+git pull origin main
+git checkout main
+git fetch --tags
+
+cz -nr 21 bump --yes
+
+git branch --set-upstream-to=origin/main main
+git push origin main:$GITHUB_REF
+
+TAG=$(git describe --tags $(git rev-list --tags --max-count=1))
+echo "export TAG='$TAG'" >> variables
+git push origin $TAG

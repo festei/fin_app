@@ -25,19 +25,11 @@ jobs:
         git checkout main
         git fetch --tags
 
-        bump_output=$(cz bump --yes)
+        cz -nr 21 bump --yes
 
-        if [[ $bump_output == *"[NO_COMMITS_TO_BUMP] The commits found are not eligible to be bumped"* ]]; then
-            # [NO_COMMITS_TO_BUMP] message detected
-            echo "No commits to bump. Skipping versioning."
-        else
-            # [NO_COMMITS_TO_BUMP] message not detected
-            # Proceed with further processing
-            echo "Commits found eligible for bumping. Proceeding with versioning."
-            git branch --set-upstream-to=origin/main main
-            git push origin main:$GITHUB_REF
-            
-            TAG=$(git describe --tags $(git rev-list --tags --max-count=1))
-            echo "export TAG='$TAG'" >> variables
-            git push origin $TAG
-        fi
+        git branch --set-upstream-to=origin/main main
+        git push origin main:$GITHUB_REF
+        
+        TAG=$(git describe --tags $(git rev-list --tags --max-count=1))
+        echo "export TAG='$TAG'" >> variables
+        git push origin $TAG
