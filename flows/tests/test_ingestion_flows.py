@@ -34,5 +34,5 @@ def test_yields_flow_raises_when_the_run_fails_outright(engine, monkeypatch):
             client=httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(429))),
         ),
     )
-    with prefect_test_harness(), pytest.raises(RuntimeError, match="ingestion failed"):
+    with prefect_test_harness(), pytest.raises(RuntimeError, match="run failed"):
         ingestion.ingest_yields_flow(["DGS10"])

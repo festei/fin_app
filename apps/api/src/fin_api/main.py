@@ -1,16 +1,20 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from datetime import UTC, date, datetime
 from functools import lru_cache
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import Engine, text
+from sqlalchemy import Engine, select, text
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
 from fin_core import __version__
+from fin_core.alerts.pipeline import feed_item
+from fin_core.db import repo, signals_repo
+from fin_core.db.models import Security
 from fin_core.db.session import database_configured, database_url, make_engine, session_scope
 from fin_core.features import FeatureFlags
 from fin_core.graph import build_graph, load_config
@@ -167,3 +171,151 @@ def score_ticker(
         signal=out.get("signal"),
         metrics=out["metrics"],
     )
+
+
+# --- alerts, opportunities, watchlist, channels --------------------------------------------------
+
+
+@contextmanager
+def _db() -> Iterator[Session]:
+    """A database session, or 503 (not configured / unreachable) like the other endpoints."""
+    if not database_configured():
+        raise HTTPException(503, detail="database not configured")
+    try:
+        with session_scope(_engine(database_url())) as session:
+            yield session
+    except SQLAlchemyError as exc:
+        raise HTTPException(503, detail=f"database unavailable ({type(exc).__name__})") from None
+
+
+class AlertOut(BaseModel):
+    id: int
+    ticker: str
+    kind: str
+    severity: str
+    conviction: float
+    title: str
+    body: str
+    created_at: str | None
+    read: bool
+    deliveries: dict[str, str]  # channel -> sent | failed | skipped
+
+
+class AlertsPage(BaseModel):
+    items: list[AlertOut]
+    next_before_id: int | None  # pass as `before_id` for the next (older) page; None = the end
+
+
+@app.get("/api/alerts", response_model=AlertsPage)
+def list_alerts(
+    limit: int = Query(50, ge=1, le=200), before_id: int | None = None, unread_only: bool = False
+) -> AlertsPage:
+    """The in-app alert feed, newest first. Always populated, whatever other channels are on."""
+    with _db() as s:
+        rows = signals_repo.list_alerts(
+            s, limit=limit, before_id=before_id, unread_only=unread_only
+        )
+        ids = {r.security_id for r in rows}
+        tickers = (
+            {x.id: x.ticker for x in s.scalars(select(Security).where(Security.id.in_(ids)))}
+            if ids
+            else {}
+        )
+        deliveries = signals_repo.deliveries_for(s, [r.id for r in rows])
+        items = [feed_item(r, tickers[r.security_id], deliveries) for r in rows]
+    return AlertsPage(
+        items=items, next_before_id=rows[-1].id if rows and len(rows) == limit else None
+    )
+
+
+@app.post("/api/alerts/{alert_id}/read")
+def mark_read(alert_id: int) -> dict[str, object]:
+    with _db() as s:
+        if not signals_repo.mark_alert_read(s, alert_id, datetime.now(UTC)):
+            raise HTTPException(404, detail=f"unknown alert {alert_id}")
+    return {"id": alert_id, "read": True}
+
+
+class OpportunityOut(BaseModel):
+    ticker: str
+    name: str | None
+    sector: str | None
+    conviction: float
+    computed_at: str | None
+    philosophies: dict[str, float]  # evaluated philosophies only
+    price: float | None
+    price_date: str | None
+
+
+@app.get("/api/opportunities", response_model=list[OpportunityOut])
+def opportunities(limit: int = Query(20, ge=1, le=200)) -> list[OpportunityOut]:
+    """Securities ranked by the conviction of their latest actionable score (stale or
+    unevaluated runs are excluded; see ``computed_at`` for the age)."""
+    with _db() as s:
+        out = []
+        for sec, score in signals_repo.opportunities(s, limit=limit):
+            d = score.details or {}
+            metrics = d.get("metrics", {})
+            out.append(
+                OpportunityOut(
+                    ticker=sec.ticker,
+                    name=sec.name,
+                    sector=sec.sector,
+                    conviction=score.conviction,
+                    computed_at=score.computed_at.isoformat() if score.computed_at else None,
+                    philosophies={
+                        n: p["score"]
+                        for n, p in (d.get("philosophies") or {}).items()
+                        if p.get("evaluated", True)
+                    },
+                    price=metrics.get("price"),
+                    price_date=metrics.get("price_date"),
+                )
+            )
+    return out
+
+
+@app.get("/api/watchlist")
+def get_watchlist() -> dict[str, list[str]]:
+    with _db() as s:
+        return {"tickers": signals_repo.watchlist_tickers(s)}
+
+
+@app.put("/api/watchlist/{ticker}")
+def watch(ticker: str) -> dict[str, object]:
+    with _db() as s:
+        sec = repo.get_security(s, ticker)
+        if sec is None:
+            raise HTTPException(404, detail=f"unknown ticker {ticker.upper()}")
+        return {"ticker": sec.ticker, "added": signals_repo.watchlist_add(s, sec.id)}
+
+
+@app.delete("/api/watchlist/{ticker}")
+def unwatch(ticker: str) -> dict[str, object]:
+    with _db() as s:
+        sec = repo.get_security(s, ticker)
+        if sec is None:
+            raise HTTPException(404, detail=f"unknown ticker {ticker.upper()}")
+        return {"ticker": sec.ticker, "removed": signals_repo.watchlist_remove(s, sec.id)}
+
+
+@app.get("/api/channels")
+def channels() -> list[dict[str, object]]:
+    """Which alert channels are active, from the feature flags (Telegram is off by default)."""
+    muted: dict[str, str | None] = {}
+    if database_configured():
+        try:
+            with _db() as s:
+                until = signals_repo.muted_until(s, "telegram")
+                muted["telegram"] = until.isoformat() if until else None
+        except HTTPException:
+            pass  # the flag view still works with the database down
+    flags = FeatureFlags.load()
+    return [
+        {"name": "in_app", "enabled": True, "muted_until": None},
+        {
+            "name": "telegram",
+            "enabled": flags.is_enabled("telegram_enabled"),
+            "muted_until": muted.get("telegram"),
+        },
+    ]

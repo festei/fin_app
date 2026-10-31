@@ -53,6 +53,8 @@ class RunSummary:
     rows: int = 0
     failed: dict[str, str] = field(default_factory=dict)  # ticker/series -> reason
     rebackfilled: list[str] = field(default_factory=list)  # tickers whose history was rewritten
+    signals: int = 0  # scoring runs: new signals created
+    alerts: int = 0  # scoring runs: new alerts created
 
 
 def _describe(exc: BaseException) -> str:
@@ -88,7 +90,7 @@ def _finish_run(engine: Engine, run_id: int, summary: RunSummary) -> None:
 
 
 @contextmanager
-def _tracked(engine: Engine, source: str) -> Iterator[RunSummary]:
+def tracked_run(engine: Engine, source: str) -> Iterator[RunSummary]:
     """Record the run. The summary starts "failed"; an exception that escapes the job is
     recorded (and re-raised) so it is never reported as healthy."""
     fail_stale_runs(engine)
@@ -108,7 +110,7 @@ def _tracked(engine: Engine, source: str) -> Iterator[RunSummary]:
         _finish_run(engine, run_id, summary)
 
 
-def _status(summary: RunSummary, total: int, aborted: bool) -> str:
+def run_status(summary: RunSummary, total: int, aborted: bool) -> str:
     if aborted or (summary.failed and len(summary.failed) >= total):
         return "failed"
     return "partial" if summary.failed else "ok"
@@ -119,7 +121,7 @@ def ingest_fundamentals(
 ) -> RunSummary:
     """Resolve missing CIKs, then store all periodic-filing facts for each stock."""
     wanted = {t.upper() for t in tickers} if tickers else None
-    with _tracked(engine, "edgar") as summary:
+    with tracked_run(engine, "edgar") as summary:
         with session_scope(engine) as s:
             stocks = [
                 (x.id, x.ticker, x.cik)
@@ -161,7 +163,7 @@ def ingest_fundamentals(
                 summary.failed[ticker] = (
                     _describe(exc) if not isinstance(exc, ProviderError) else str(exc)
                 )
-        summary.status = _status(summary, len(stocks), aborted)
+        summary.status = run_status(summary, len(stocks), aborted)
     return summary
 
 
@@ -169,7 +171,7 @@ def ingest_yields(
     engine: Engine, fred: FredClient, series_ids: list[str], start: date | None = None
 ) -> RunSummary:
     """Fetch FRED series incrementally (from the last stored date minus an overlap)."""
-    with _tracked(engine, "fred") as summary:
+    with tracked_run(engine, "fred") as summary:
         aborted = False
         for series_id in series_ids:
             try:
@@ -194,7 +196,7 @@ def ingest_yields(
                 summary.failed[series_id] = (
                     _describe(exc) if not isinstance(exc, ProviderError) else str(exc)
                 )
-        summary.status = _status(summary, len(series_ids), aborted)
+        summary.status = run_status(summary, len(series_ids), aborted)
     return summary
 
 
@@ -281,7 +283,7 @@ def ingest_prices(
     plus adjustment factors), which is planned with the backtester.
     """
     wanted = {t.upper() for t in tickers} if tickers else None
-    with _tracked(engine, "prices") as summary:
+    with tracked_run(engine, "prices") as summary:
         with session_scope(engine) as s:
             targets = [
                 (x.id, x.ticker)
@@ -314,5 +316,5 @@ def ingest_prices(
                 summary.failed[ticker] = (
                     _describe(exc) if not isinstance(exc, ProviderError) else str(exc)
                 )
-        summary.status = _status(summary, len(targets), aborted)
+        summary.status = run_status(summary, len(targets), aborted)
     return summary
