@@ -13,6 +13,11 @@ class RateLimitError(ProviderError):
     """The provider throttled us (often reported as HTTP 200 with a note in the body)."""
 
 
+class AccessDeniedError(ProviderError):
+    """The provider refused us (e.g. EDGAR 403 for a missing/invalid User-Agent). Retrying
+    cannot help until the configuration is fixed, so ingestion aborts the run."""
+
+
 class PriceProvider(Protocol):
     """Swap implementations (yfinance, Polygon, Alpaca, ...) without touching callers."""
 

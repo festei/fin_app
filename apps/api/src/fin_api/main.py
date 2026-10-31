@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import text
 
 from fin_core import __version__
+from fin_core.db.session import database_configured, database_url, make_engine
 from fin_core.features import FeatureFlags
 from fin_core.graph import build_graph, load_config
 from fin_core.models import ScoreResult, SecurityMetrics, Signal
@@ -41,12 +43,29 @@ def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@lru_cache
+def _engine(url: str):
+    return make_engine(url, connect_timeout=3)  # a probe must not hang
+
+
 @app.get("/readyz")
 def readyz() -> dict[str, str]:
-    """Readiness: config and graph load. Extended with a DB check in phase 1."""
+    """Readiness: config and graph load, and the database answers if one is configured.
+
+    With no database configured (e.g. a bare dev run) the API is still ready and says so;
+    with one configured, an unreachable database makes the service not ready (503).
+    """
     _config()
     _graph()
-    return {"status": "ready"}
+    if not database_configured():
+        return {"status": "ready", "db": "not configured"}
+    try:
+        with _engine(database_url()).connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception as exc:
+        # Only the exception type: the message can contain connection details.
+        raise HTTPException(503, detail=f"database unavailable ({type(exc).__name__})") from None
+    return {"status": "ready", "db": "ok"}
 
 
 @app.get("/api/features")
