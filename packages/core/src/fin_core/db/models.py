@@ -13,6 +13,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
     Date,
@@ -23,13 +24,17 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    Text,
     UniqueConstraint,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 # BigInteger autoincrement primary keys need Integer on SQLite.
 BigIntPK = BigInteger().with_variant(Integer, "sqlite")
+# JSONB on Postgres (indexable, compact), plain JSON on SQLite (tests)
+JsonType = JSON().with_variant(JSONB(), "postgresql")
 
 
 class Base(DeclarativeBase):
@@ -120,3 +125,108 @@ class IngestionRun(Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="running")
     rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error: Mapped[str | None] = mapped_column(String(500))
+
+
+class ScoreRecord(Base):
+    """One scoring run for one security. Append-only history: the *state machine* behind signals.
+
+    ``conviction`` is NULL when no philosophy could be evaluated. A row is an *actionable*
+    baseline for the next transition only if conviction is set and no signal blockers applied
+    (``signal_blocked`` False); otherwise a run on stale data would swallow the later buy.
+    """
+
+    __tablename__ = "scores"
+    __table_args__ = (Index("ix_scores_security_computed", "security_id", "computed_at"),)
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
+    security_id: Mapped[int] = mapped_column(
+        ForeignKey("securities.id", ondelete="CASCADE"), nullable=False
+    )
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    conviction: Mapped[float | None] = mapped_column(Float)
+    all_abstained: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    signal_blocked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    explanation: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    details: Mapped[dict] = mapped_column(JsonType, nullable=False, default=dict)
+
+
+class SignalRecord(Base):
+    __tablename__ = "signals"
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
+    security_id: Mapped[int] = mapped_column(
+        ForeignKey("securities.id", ondelete="CASCADE"), nullable=False
+    )
+    score_id: Mapped[int] = mapped_column(
+        ForeignKey("scores.id", ondelete="CASCADE"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    conviction: Mapped[float] = mapped_column(Float, nullable=False)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class AlertRecord(Base):
+    """An alert-worthy signal. Channel-independent; deliveries are tracked separately."""
+
+    __tablename__ = "alerts"
+    __table_args__ = (Index("ix_alerts_security_kind", "security_id", "kind", "created_at"),)
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
+    security_id: Mapped[int] = mapped_column(
+        ForeignKey("securities.id", ondelete="CASCADE"), nullable=False
+    )
+    signal_id: Mapped[int] = mapped_column(
+        ForeignKey("signals.id", ondelete="CASCADE"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    severity: Mapped[str] = mapped_column(String(8), nullable=False)  # high | normal
+    conviction: Mapped[float] = mapped_column(Float, nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AlertDelivery(Base):
+    """Delivery of one alert through one channel. Rows exist only for channels that were
+    registered when the alert was created, so enabling a channel later never replays history."""
+
+    __tablename__ = "alert_deliveries"
+    __table_args__ = (UniqueConstraint("alert_id", "channel", name="uq_delivery_alert_channel"),)
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
+    alert_id: Mapped[int] = mapped_column(
+        ForeignKey("alerts.id", ondelete="CASCADE"), nullable=False
+    )
+    channel: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)  # sent | failed | skipped
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error: Mapped[str | None] = mapped_column(String(500))  # never contains credentials
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class WatchlistEntry(Base):
+    __tablename__ = "watchlist"
+
+    security_id: Mapped[int] = mapped_column(
+        ForeignKey("securities.id", ondelete="CASCADE"), primary_key=True
+    )
+    added_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ChannelState(Base):
+    __tablename__ = "channel_state"
+
+    channel: Mapped[str] = mapped_column(String(32), primary_key=True)
+    muted_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
