@@ -28,3 +28,4 @@ known-first-party = ["fin_core", "fin_api", "fin_flows"]
 [tool.pytest.ini_options]
 testpaths = ["packages/core/tests", "apps/api/tests", "flows/tests"]
 asyncio_mode = "auto"
+markers = ["postgres: needs a real Postgres (set TEST_DATABASE_URL); skipped otherwise"]

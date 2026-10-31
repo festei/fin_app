@@ -31,6 +31,21 @@ cd apps/web && pnpm install && pnpm dev           # UI on :5173, proxies /api to
 
 Containers: `cp .env.example .env && docker compose -f deploy/docker-compose.yml up --build`.
 
+## Database
+
+Postgres (TimescaleDB optional: `price_bars` becomes a hypertable when the extension exists, plain
+Postgres works unchanged). The database must be UTF-8 encoded. Config: `DATABASE_URL`, or
+`POSTGRES_USER/PASSWORD/HOST/PORT/DB`.
+
+```sh
+uv run python -m fin_core.db.migrate upgrade      # apply migrations (also: downgrade, current)
+TEST_DATABASE_URL=postgresql+psycopg://user:pw@localhost:5432/fin_test uv run pytest
+```
+
+Without `TEST_DATABASE_URL` the DB tests run on SQLite only; with it they also run on Postgres.
+Fundamentals are stored with their filing date, and `repo.facts_as_of` only returns what was public
+at the given date (no look-ahead).
+
 ## Feature flags
 
 `config/features.yml` holds defaults; env `FEATURE_<NAME>` overrides. `telegram_enabled` is off by
