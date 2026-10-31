@@ -10,7 +10,9 @@ COPY pyproject.toml uv.lock ./
 COPY packages ./packages
 COPY apps/api ./apps/api
 COPY flows ./flows
-RUN uv sync --frozen --no-dev --package ${PACKAGE}
+# --no-editable: install workspace packages into the venv. The default editable install only
+# leaves .pth links to /app/packages, which the final stage does not copy (ImportError at start).
+RUN uv sync --frozen --no-dev --no-editable --package ${PACKAGE}
 
 FROM python:3.12-slim
 RUN useradd --system --uid 10001 --home /app app

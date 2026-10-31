@@ -1,9 +1,18 @@
+# DISABLED for now: CI/CD is deferred to a later stage (everything is tested locally first).
+# Only manual runs (workflow_dispatch) are possible. Local equivalents:
+#   uv run ruff check . && uv run ruff format --check . && uv run pytest
+#   (cd apps/web && pnpm typecheck && pnpm test && pnpm build)
+#   scripts/smoke-images.sh
+#
+# Before re-enabling, restore the triggers and fix:
+#   - aquasecurity/trivy-action@0.28.0 does not resolve: pin a tag/SHA that exists
+#   - trigger on `pull_request` plus `push` to main only (the current pair ran twice per push),
+#     or key the concurrency group on the branch name
+#   - add `.github/workflows/**`, `.dockerignore` and `.env.example` to the path filters
 name: CI
 
 on:
-  pull_request:
-  push:
-    branches-ignore: [main]   # main is covered by the release workflow's checks via PR merges
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -104,6 +113,18 @@ jobs:
           user=$(docker image inspect ${{ matrix.name }}:ci --format '{{.Config.User}}')
           echo "image user: '$user'"
           test -n "$user" && test "$user" != "root" && test "$user" != "0"
+      - name: Smoke test (python images import and find config/)
+        if: startsWith(matrix.file, 'deploy/python')
+        run: |
+          if [ "${{ matrix.name }}" = "fin-api" ]; then
+            docker run --rm ${{ matrix.name }}:ci python -c \
+              "import fin_api.main, fin_core.graph as g; g.build_graph(); g.load_config()"
+          else
+            docker run --rm ${{ matrix.name }}:ci python -c "import fin_flows.scoring"
+          fi
+      - name: Smoke test (web image contains the build)
+        if: matrix.name == 'fin-web'
+        run: docker run --rm --entrypoint test ${{ matrix.name }}:ci -f /usr/share/nginx/html/index.html
       - name: Trivy scan (HIGH/CRITICAL, fixable only)
         uses: aquasecurity/trivy-action@0.28.0
         with:

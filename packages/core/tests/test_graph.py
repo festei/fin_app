@@ -43,6 +43,41 @@ def test_graham_missing_data_fails_criterion_not_crash():
     assert r.score < 100
 
 
+def failed_names(r) -> set[str]:
+    return {c.name for c in r.failed_criteria}
+
+
+def test_graham_negative_pe_loss_maker_fails_pe_and_product():
+    # Without a sign check, -5 < 15 and -5 * 1.2 < 22.5 would both "pass".
+    r = score_graham(metrics(pe=-5.0), CFG["graham"])
+    assert {"P/E below limit", "P/E x P/B below limit"} <= failed_names(r)
+    assert r.score < 100
+
+
+def test_graham_negative_pb_negative_equity_fails_pb_and_product():
+    r = score_graham(metrics(pb=-2.0), CFG["graham"])
+    assert {"P/B below limit", "P/E x P/B below limit"} <= failed_names(r)
+
+
+def test_graham_two_negatives_do_not_multiply_into_a_pass():
+    # (-5) * (-2) = +10 would pass the product limit if only the product were checked.
+    r = score_graham(metrics(pe=-5.0, pb=-2.0), CFG["graham"])
+    assert {"P/E below limit", "P/B below limit", "P/E x P/B below limit"} <= failed_names(r)
+
+
+def test_graham_zero_pe_is_not_meaningful():
+    assert "P/E below limit" in failed_names(score_graham(metrics(pe=0.0), CFG["graham"]))
+
+
+def test_graham_negative_debt_to_equity_fails_but_zero_debt_passes():
+    assert "Debt/equity below limit" in failed_names(
+        score_graham(metrics(debt_to_equity=-0.5), CFG["graham"])
+    )
+    assert "Debt/equity below limit" not in failed_names(
+        score_graham(metrics(debt_to_equity=0.0), CFG["graham"])
+    )
+
+
 def run(m, previous=None):
     return build_graph().invoke({"metrics": m, "config": CFG, "previous_conviction": previous})
 

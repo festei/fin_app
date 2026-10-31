@@ -5,8 +5,10 @@ description = "FastAPI service: REST + WebSocket for the trading UI"
 requires-python = ">=3.12"
 dependencies = [
     "fin-core",
-    # Capped: Prefect 3.8's server code (shared workspace env) breaks on newer FastAPI
-    # (Body(min_items=...) was removed). Verified working up to 0.136.1; revisit on Prefect upgrade.
+    # Capped: Prefect's server code (shared workspace env) breaks on newer FastAPI
+    # (Body(min_items=...) was removed). Verified with Prefect 3.7.7 (the locked version, which
+    # must match the prefecthq/prefect image tag in deploy/docker-compose*.yml; see
+    # flows/tests/test_versions.py) and FastAPI up to 0.136.3. Revisit on a Prefect upgrade.
     "fastapi>=0.111,<0.137",
     "uvicorn[standard]>=0.30",
 ]

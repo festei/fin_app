@@ -5,6 +5,14 @@ from typing import Protocol
 import pandas as pd
 
 
+class ProviderError(RuntimeError):
+    """A data provider failed or returned something unusable. Never contains credentials."""
+
+
+class RateLimitError(ProviderError):
+    """The provider throttled us (often reported as HTTP 200 with a note in the body)."""
+
+
 class PriceProvider(Protocol):
     """Swap implementations (yfinance, Polygon, Alpaca, ...) without touching callers."""
 

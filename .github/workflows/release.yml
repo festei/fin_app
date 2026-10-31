@@ -1,9 +1,12 @@
+# DISABLED for now: CI/CD is deferred to a later stage (everything is tested locally first).
+# Only manual runs (workflow_dispatch) are possible. To re-enable, restore the trigger:
+#   on:
+#     push:
+#       branches: [main]
 name: Release (Commitizen version bump)
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 
 jobs:
   commitizen:
@@ -11,7 +14,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v2
+      uses: actions/checkout@v4
 
     - name: Install Commitizen
       run: pip3 install -U Commitizen==3.20.0
