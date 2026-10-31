@@ -37,18 +37,35 @@ def guardrails_node(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def aggregate_node(state: dict[str, Any]) -> dict[str, Any]:
-    results = state["philosophy_results"]
+    """Weighted mean of the philosophies that could be evaluated. Abstentions (too little data)
+    are excluded from the weighting rather than counted as zero, and are named in the text."""
+    all_results = state["philosophy_results"]
     weights = state["config"].get("weights", {})
-    total = sum(weights.get(name, 1.0) for name in results) or 1.0
+    results = {n: r for n, r in all_results.items() if r.evaluated}
+    abstained = sorted(n for n, r in all_results.items() if not r.evaluated)
+    note = f" Not evaluated (insufficient data): {', '.join(abstained)}." if abstained else ""
+    total = sum(weights.get(name, 1.0) for name in results)
+    if not results or total <= 0:
+        return {
+            "conviction": 0.0,
+            "all_abstained": True,
+            "explanation": f"No philosophy could be evaluated.{note}",
+        }
     conviction = sum(r.score * weights.get(n, 1.0) for n, r in results.items()) / total
     if state.get("guardrail_veto"):
         conviction = min(conviction, SELL_THRESHOLD - 1)
     parts = ", ".join(f"{n} {r.score:.0f}" for n, r in sorted(results.items()))
-    return {"conviction": round(conviction, 1), "explanation": f"Conviction from: {parts}."}
+    return {
+        "conviction": round(conviction, 1),
+        "all_abstained": False,
+        "explanation": f"Conviction from: {parts}.{note}",
+    }
 
 
 def decide_node(state: dict[str, Any]) -> dict[str, Any]:
     """Emit a signal only on a transition across a threshold, never on every run."""
+    if state.get("all_abstained"):
+        return {"signal": None}  # nothing was evaluated: a 0 here is absence of data, not a view
     now: float = state["conviction"]
     prev: float | None = state.get("previous_conviction")
     m: SecurityMetrics = state["metrics"]

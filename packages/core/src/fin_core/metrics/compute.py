@@ -231,6 +231,8 @@ def compute_metrics(session: Session, ticker: str, as_of: date | datetime) -> Se
         eps=eps,
         book_value_per_share=bvps,
         latest_fiscal_year_end=latest_fy,
+        sector=sec.sector,
+        multi_class=sec.ticker in MULTI_CLASS_TICKERS,
         annual={
             c: [AnnualPoint(period_end=e, value=v) for e, v in pts] for c, pts in series.items()
         },

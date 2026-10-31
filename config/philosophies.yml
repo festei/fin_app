@@ -2,6 +2,7 @@
 # "deterministic" today, "llm" once agent-based nodes exist.
 weights:
   graham: 1.0
+  buffett: 1.0
 
 graham:
   impl: deterministic
@@ -12,3 +13,22 @@ graham:
   max_debt_to_equity: 1.0
   min_dividend_years: 10
   min_earnings_growth: 0.0
+
+# Buffett/Munger-style quality at a fair price. Needs multi-year history: with fewer than
+# `min_history_years` fiscal years it abstains rather than scoring zero.
+buffett:
+  impl: deterministic
+  window_years: 10
+  min_history_years: 5
+  min_roe: 0.15                    # return on equity floor...
+  min_roe_year_share: 0.8          # ...met in at least this share of the years
+  min_avg_operating_margin: 0.15
+  min_worst_operating_margin: 0.05
+  min_positive_earnings_share: 0.9
+  max_debt_payback_years: 4.0      # long-term debt / net income
+  max_capex_to_net_income: 0.5
+  capex_years: 5
+  owner_earnings_years: 3          # owner earnings = net income + D&A - capex, averaged
+  discount_rate: 0.10              # intrinsic value = owner earnings * (1+growth) / (rate - growth)
+  growth: 0.0
+  min_margin_of_safety: 0.25
