@@ -5,6 +5,12 @@ x-python: &python
   env_file: [{ path: ../.env, required: false }]
   restart: unless-stopped
 
+x-dbenv: &dbenv
+  POSTGRES_HOST: db
+  POSTGRES_USER: ${POSTGRES_USER:-fin}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fin}
+  POSTGRES_DB: ${POSTGRES_DB:-fin}
+
 services:
   db:
     image: timescale/timescaledb:2.17.2-pg16
@@ -25,6 +31,17 @@ services:
     ports: ["4200:4200"]
     volumes: [prefectdata:/root/.prefect]
 
+  migrate:
+    <<: *python
+    build:
+      context: ..
+      dockerfile: deploy/python.Dockerfile
+      args: { PACKAGE: fin-api }
+    command: python -m fin_core.db.migrate upgrade
+    restart: "no"
+    environment: *dbenv
+    depends_on: { db: { condition: service_healthy } }
+
   api:
     <<: *python
     build:
@@ -32,6 +49,8 @@ services:
       dockerfile: deploy/python.Dockerfile
       args: { PACKAGE: fin-api }
     command: uvicorn fin_api.main:app --host 0.0.0.0 --port 8000
+    environment: *dbenv
+    depends_on: { migrate: { condition: service_completed_successfully } }
     ports: ["8000:8000"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/healthz')"]
@@ -45,6 +64,8 @@ services:
       dockerfile: deploy/python.Dockerfile
       args: { PACKAGE: fin-api }
     command: python -m fin_api.worker
+    environment: *dbenv
+    depends_on: { migrate: { condition: service_completed_successfully } }
     stop_grace_period: 20s
 
   flows:
@@ -55,8 +76,11 @@ services:
       args: { PACKAGE: fin-flows }
     command: python -m fin_flows.scoring
     environment:
+      <<: *dbenv
       PREFECT_API_URL: http://prefect:4200/api
-    depends_on: [prefect]
+    depends_on:
+      prefect: { condition: service_started }
+      migrate: { condition: service_completed_successfully }
 
   web:
     build: { context: .., dockerfile: deploy/web.Dockerfile }

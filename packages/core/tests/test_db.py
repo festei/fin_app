@@ -3,38 +3,22 @@
 
 from __future__ import annotations
 
-import os
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect
 
 from fin_core.db import migrate, repo
 from fin_core.db.models import Base, FundamentalFact
-from fin_core.db.session import database_url, make_engine, session_scope
-
-PG_URL = os.environ.get("TEST_DATABASE_URL")
+from fin_core.db.session import database_url, session_scope
 
 
-@pytest.fixture(params=["sqlite", pytest.param("postgres", marks=pytest.mark.postgres)])
-def engine(request, tmp_path):
-    if request.param == "sqlite":
-        url = f"sqlite:///{tmp_path / 'test.db'}"
-    else:
-        if not PG_URL:
-            pytest.skip("TEST_DATABASE_URL not set")
-        url = PG_URL
-    eng = make_engine(url)
-    if request.param == "postgres":  # start from an empty schema
-        with eng.begin() as c:
-            c.execute(text("DROP SCHEMA public CASCADE"))
-            c.execute(text("CREATE SCHEMA public"))
-    migrate.upgrade(url)
-    yield eng
-    eng.dispose()
+@pytest.fixture
+def engine(raw_engine):
+    return raw_engine
 
 
 def fact(**kw):

@@ -26,6 +26,12 @@ def database_url() -> str:
     return f"postgresql+psycopg://{quote(user, safe='')}:{password}@{host}:{port}/{db}"
 
 
+def database_configured() -> bool:
+    """True when a database is configured via DATABASE_URL or POSTGRES_USER + POSTGRES_DB."""
+    env = os.environ
+    return bool(env.get("DATABASE_URL") or (env.get("POSTGRES_USER") and env.get("POSTGRES_DB")))
+
+
 def make_engine(url: str | None = None) -> Engine:
     return create_engine(url or database_url(), pool_pre_ping=True)
 

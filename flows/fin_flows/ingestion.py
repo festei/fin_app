@@ -11,9 +11,10 @@ from dataclasses import asdict
 from prefect import flow, get_run_logger, serve
 
 from fin_core.db.session import make_engine, session_scope
-from fin_core.ingest import ingest_fundamentals, ingest_yields
+from fin_core.ingest import ingest_fundamentals, ingest_prices, ingest_yields
 from fin_core.providers.edgar import EdgarClient
 from fin_core.providers.fred import FredClient
+from fin_core.providers.yfinance_provider import YFinancePriceProvider
 from fin_core.universe import load_bond_series, sync_universe
 
 
@@ -23,6 +24,10 @@ def _edgar() -> EdgarClient:  # indirection so tests can inject a client
 
 def _fred() -> FredClient:
     return FredClient()
+
+
+def _prices() -> YFinancePriceProvider:
+    return YFinancePriceProvider()
 
 
 def _check(summary) -> dict:
@@ -59,10 +64,16 @@ def ingest_yields_flow(series_ids: list[str] | None = None) -> dict:
     return _check(ingest_yields(make_engine(), _fred(), ids))
 
 
+@flow(name="ingest-prices")
+def ingest_prices_flow(tickers: list[str] | None = None) -> dict:
+    return _check(ingest_prices(make_engine(), _prices(), tickers))
+
+
 if __name__ == "__main__":
     # Weekday schedules (UTC), after the US close. Requires a Prefect server (PREFECT_API_URL).
     serve(
         sync_universe_flow.to_deployment("daily", cron="0 21 * * 1-5"),
+        ingest_prices_flow.to_deployment("daily", cron="30 21 * * 1-5"),
         ingest_yields_flow.to_deployment("daily", cron="30 22 * * 1-5"),
         ingest_fundamentals_flow.to_deployment("daily", cron="0 23 * * 1-5"),
     )

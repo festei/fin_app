@@ -7,16 +7,18 @@ response aborts the run so we stop hammering the provider.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
+import pandas as pd
 from sqlalchemy import Engine, select
 
 from fin_core.db import repo
-from fin_core.db.models import BondYield, IngestionRun, Security
+from fin_core.db.models import BondYield, IngestionRun, PriceBar, Security
 from fin_core.db.session import session_scope
-from fin_core.providers.base import ProviderError, RateLimitError
+from fin_core.providers.base import PriceProvider, ProviderError, RateLimitError
 from fin_core.providers.edgar import EdgarClient, normalize_facts
 from fin_core.providers.fred import FredClient
 
@@ -136,6 +138,88 @@ def ingest_yields(
             except ProviderError as exc:
                 summary.failed[series_id] = str(exc)
         summary.status = _status(summary, len(series_ids), aborted)
+    finally:
+        _finish_run(engine, run_id, summary)
+    return summary
+
+
+def _num(x: Any) -> float | None:
+    return None if x is None or (isinstance(x, float) and math.isnan(x)) else float(x)
+
+
+def bars_from_frame(frame: pd.DataFrame) -> list[dict[str, Any]]:
+    """Provider frame (first column = timestamp, then Open/High/Low/Close/Volume) -> bar dicts.
+
+    Timestamps are converted to UTC (naive ones are taken as UTC). Rows without a close are
+    dropped, other missing values become NULL.
+    """
+    if frame.empty:
+        return []
+    ts_col = frame.columns[0]
+    bars: list[dict[str, Any]] = []
+    for rec in frame.to_dict("records"):
+        close = _num(rec.get("Close"))
+        if close is None:
+            continue
+        ts = pd.Timestamp(rec[ts_col])
+        ts = ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
+        volume = _num(rec.get("Volume"))
+        bars.append(
+            {
+                "ts": ts.to_pydatetime(),
+                "open": _num(rec.get("Open")),
+                "high": _num(rec.get("High")),
+                "low": _num(rec.get("Low")),
+                "close": close,
+                "volume": int(volume) if volume is not None else None,
+            }
+        )
+    return bars
+
+
+def ingest_prices(
+    engine: Engine,
+    provider: PriceProvider,
+    tickers: list[str] | None = None,
+    *,
+    backfill_period: str = "max",
+    refresh_period: str = "1mo",
+) -> RunSummary:
+    """Store price bars for every active security (stocks and bond ETFs).
+
+    A security with no stored bars is back-filled (``backfill_period``); otherwise only a
+    recent window is re-read (``refresh_period``), which also picks up corrected bars.
+    """
+    summary = RunSummary("prices")
+    run_id = _start_run(engine, "prices")
+    aborted = False
+    wanted = {t.upper() for t in tickers} if tickers else None
+    try:
+        with session_scope(engine) as s:
+            targets = [
+                (x.id, x.ticker)
+                for x in repo.list_securities(s)
+                if wanted is None or x.ticker in wanted
+            ]
+            has_bars = set(s.scalars(select(PriceBar.security_id).distinct()))
+        for sid, ticker in targets:
+            period = refresh_period if sid in has_bars else backfill_period
+            try:
+                bars = bars_from_frame(provider.history(ticker, period=period))
+                if not bars:
+                    summary.failed[ticker] = "no price data returned"
+                    continue
+                with session_scope(engine) as s:
+                    summary.rows += repo.upsert_prices(s, sid, bars)
+            except RateLimitError as exc:
+                summary.failed[ticker] = str(exc)
+                aborted = True
+                break
+            except ProviderError as exc:
+                summary.failed[ticker] = str(exc)
+            except Exception as exc:  # yfinance raises assorted errors; isolate per ticker
+                summary.failed[ticker] = f"{type(exc).__name__}: {exc}"[:200]
+        summary.status = _status(summary, len(targets), aborted)
     finally:
         _finish_run(engine, run_id, summary)
     return summary

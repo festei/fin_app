@@ -8,6 +8,12 @@ x-common: &common
   env_file: [{ path: ../.env, required: false }]
   logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
 
+x-dbenv: &dbenv
+  POSTGRES_HOST: db
+  POSTGRES_USER: ${POSTGRES_USER:-fin}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+  POSTGRES_DB: ${POSTGRES_DB:-fin}
+
 services:
   db:
     image: timescale/timescaledb:2.17.2-pg16
@@ -30,6 +36,14 @@ services:
     volumes: [prefectdata:/root/.prefect]
     deploy: { resources: { limits: { memory: 512m } } }
 
+  migrate:
+    <<: *common
+    image: fin-api:${TAG:?set TAG}
+    command: python -m fin_core.db.migrate upgrade
+    restart: "no"
+    environment: *dbenv
+    depends_on: { db: { condition: service_healthy } }
+
   api:
     <<: *common
     image: fin-api:${TAG:?set TAG}
@@ -38,7 +52,8 @@ services:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/readyz')"]
       interval: 15s
       retries: 5
-    depends_on: { db: { condition: service_healthy } }
+    environment: *dbenv
+    depends_on: { migrate: { condition: service_completed_successfully } }
     deploy: { resources: { limits: { memory: 512m } } }
 
   worker:
@@ -46,7 +61,8 @@ services:
     image: fin-api:${TAG:?set TAG}
     command: python -m fin_api.worker
     stop_grace_period: 30s
-    depends_on: { db: { condition: service_healthy } }
+    environment: *dbenv
+    depends_on: { migrate: { condition: service_completed_successfully } }
     deploy: { replicas: 1, resources: { limits: { memory: 512m } } }
 
   flows:
@@ -54,8 +70,11 @@ services:
     image: fin-flows:${TAG:?set TAG}
     command: python -m fin_flows.scoring
     environment:
+      <<: *dbenv
       PREFECT_API_URL: http://prefect:4200/api
-    depends_on: [prefect, db]
+    depends_on:
+      prefect: { condition: service_started }
+      migrate: { condition: service_completed_successfully }
     deploy: { resources: { limits: { memory: 1g } } }
 
   web:

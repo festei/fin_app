@@ -2,23 +2,22 @@ from datetime import date
 from decimal import Decimal
 
 import httpx
+import pandas as pd
 import pytest
 from sqlalchemy import select
 
 from fin_core import ingest
-from fin_core.db import migrate, repo
-from fin_core.db.models import BondYield, FundamentalFact, IngestionRun
-from fin_core.db.session import make_engine, session_scope
+from fin_core.db import repo
+from fin_core.db.models import BondYield, FundamentalFact, IngestionRun, PriceBar
+from fin_core.db.session import session_scope
+from fin_core.providers.base import ProviderError, RateLimitError
 from fin_core.providers.edgar import EdgarClient
 from fin_core.providers.fred import FredClient
 
 
 @pytest.fixture
-def engine(tmp_path):
-    url = f"sqlite:///{tmp_path / 'ingest.db'}"
-    migrate.upgrade(url)
-    eng = make_engine(url)
-    with session_scope(eng) as s:
+def engine(raw_engine):
+    with session_scope(raw_engine) as s:
         repo.upsert_securities(
             s,
             [
@@ -27,8 +26,7 @@ def engine(tmp_path):
                 {"ticker": "SHY", "kind": "etf"},  # ETFs have no fundamentals: skipped
             ],
         )
-    yield eng
-    eng.dispose()
+    return raw_engine
 
 
 def edgar_with(handler) -> EdgarClient:
@@ -156,3 +154,84 @@ def test_yields_rate_limit_aborts(engine):
         engine, fred_with(lambda r: httpx.Response(429)), ["DGS10", "DGS2"]
     )
     assert summary.status == "failed" and list(summary.failed) == ["DGS10"]
+
+
+# --- prices ------------------------------------------------------------------------------
+
+
+class FakePrices:
+    """Records the period requested per ticker; behaviour per ticker is configurable."""
+
+    def __init__(self, frames=None, errors=None):
+        self.frames, self.errors, self.periods = frames or {}, errors or {}, {}
+
+    def history(self, ticker, period="max"):
+        self.periods[ticker] = period
+        if ticker in self.errors:
+            raise self.errors[ticker]
+        return self.frames.get(ticker, pd.DataFrame())
+
+    def last_price(self, ticker):  # pragma: no cover - protocol completeness
+        return None
+
+
+def frame(rows, tz="America/New_York"):
+    idx = pd.DatetimeIndex([r[0] for r in rows], name="Date", tz=tz)
+    return pd.DataFrame(
+        {
+            "Open": [r[1] for r in rows],
+            "High": [r[1] for r in rows],
+            "Low": [r[1] for r in rows],
+            "Close": [r[2] for r in rows],
+            "Volume": [r[3] for r in rows],
+        },
+        index=idx,
+    ).reset_index()
+
+
+def test_prices_stored_in_utc_and_nan_rows_dropped(engine):
+    f = frame([("2025-01-02", 100.0, 101.0, 1000), ("2025-01-03", 101.0, float("nan"), 5)])
+    summary = ingest.ingest_prices(engine, FakePrices({"TEST": f}), ["TEST"])
+    assert summary.status == "ok" and summary.rows == 1
+    with session_scope(engine) as s:
+        sid = repo.get_security(s, "TEST").id
+        bar = repo.latest_price(s, sid)
+        assert bar.close == 101.0 and bar.volume == 1000
+        # midnight New York == 05:00 UTC
+        assert (bar.ts.hour, bar.ts.minute) == (5, 0)
+
+
+def test_prices_backfill_first_then_refresh_window_and_idempotent(engine):
+    provider = FakePrices({"TEST": frame([("2025-01-02", 1.0, 2.0, 10)])})
+    ingest.ingest_prices(engine, provider, ["TEST"])
+    assert provider.periods["TEST"] == "max"  # nothing stored yet: back-fill
+    ingest.ingest_prices(engine, provider, ["TEST"])
+    assert provider.periods["TEST"] == "1mo"  # bars exist: short refresh window
+    with session_scope(engine) as s:
+        assert s.query(PriceBar).count() == 1
+
+
+def test_prices_empty_and_failing_tickers_are_isolated(engine):
+    provider = FakePrices(
+        frames={"TEST": frame([("2025-01-02", 1.0, 2.0, 10)])},  # MISSING returns empty
+        errors={"SHY": ProviderError("boom")},
+    )
+    summary = ingest.ingest_prices(engine, provider)
+    assert summary.status == "partial"
+    assert summary.failed == {"MISSING": "no price data returned", "SHY": "boom"}
+    assert summary.rows == 1
+
+
+def test_prices_unexpected_exception_does_not_stop_the_run(engine):
+    provider = FakePrices(
+        frames={"TEST": frame([("2025-01-02", 1.0, 2.0, 10)])}, errors={"MISSING": KeyError("x")}
+    )
+    summary = ingest.ingest_prices(engine, provider, ["TEST", "MISSING"])
+    assert summary.status == "partial" and "KeyError" in summary.failed["MISSING"]
+
+
+def test_prices_rate_limit_aborts(engine):
+    provider = FakePrices(errors={"MISSING": RateLimitError("slow down")})
+    summary = ingest.ingest_prices(engine, provider)
+    assert summary.status == "failed" and "MISSING" in summary.failed
+    assert runs(engine)[-1].source == "prices"

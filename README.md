@@ -29,7 +29,9 @@ uv run uvicorn fin_api.main:app --reload          # API on :8000
 cd apps/web && pnpm install && pnpm dev           # UI on :5173, proxies /api to :8000
 ```
 
-Containers: `cp .env.example .env && docker compose -f deploy/docker-compose.yml up --build`.
+Containers: `cp .env.example .env && docker compose -f deploy/docker-compose.yml up --build`. A one-shot
+`migrate` service applies the migrations before the API, worker and flows start; `/readyz` reports
+`db: ok` once the database answers (503 if a configured database is unreachable).
 
 ## Database
 
@@ -50,7 +52,9 @@ at the given date (no look-ahead).
 
 * `fin_core.providers.edgar`: SEC EDGAR ticker→CIK map and XBRL company facts (needs `SEC_USER_AGENT`).
 * `fin_core.providers.fred`: Treasury yields, curve spread and credit spreads (needs `FRED_API_KEY`).
-* `fin_core.ingest`: per-ticker/series isolation, idempotent upserts, one `ingestion_runs` row per job.
+* `fin_core.providers.yfinance_provider`: daily price bars (swap in a paid feed behind `PriceProvider`).
+* `fin_core.ingest`: `ingest_fundamentals`, `ingest_prices`, `ingest_yields`; per-ticker/series isolation,
+  idempotent upserts, back-fill on first run then a short refresh window, one `ingestion_runs` row per job.
 * `flows/fin_flows/ingestion.py`: Prefect flows (`python -m fin_flows.ingestion` serves the schedules).
 * Config: `config/universe.yml`, `config/bond_series.yml`.
 
