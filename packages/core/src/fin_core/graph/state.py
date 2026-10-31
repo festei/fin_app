@@ -18,6 +18,10 @@ class GraphState(TypedDict, total=False):
     previous_conviction: float | None
     philosophy_results: Annotated[dict[str, ScoreResult], merge_results]
     guardrail_veto: bool
-    conviction: float
+    guardrail_results: dict[str, ScoreResult]
+    guardrail_reasons: list[str]
+    guardrail_notes: list[str]
+    all_abstained: bool
+    conviction: float | None  # None = nothing could be evaluated (not a score of 0)
     explanation: str
     signal: Signal | None

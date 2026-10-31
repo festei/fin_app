@@ -29,6 +29,9 @@ class ScoreResult(BaseModel):
     explanation: str = ""
     evidence: list[str] = Field(default_factory=list)
     impl: Literal["deterministic", "llm"] = "deterministic"
+    # False = this philosophy could not be evaluated (e.g. too little history). It abstains: the
+    # aggregate ignores it instead of counting a 0, and `score` carries no meaning.
+    evaluated: bool = True
 
     @property
     def passed_criteria(self) -> list[Criterion]:
@@ -66,6 +69,9 @@ class SecurityMetrics(BaseModel):
     eps: float | None = None
     book_value_per_share: float | None = None
     latest_fiscal_year_end: date | None = None
+    sector: str | None = None
+    # Share counts and per-share values cover one class only (see MULTI_CLASS_TICKERS).
+    multi_class: bool = False
     annual: dict[str, list[AnnualPoint]] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)  # data-quality notes, never silent gaps
     # Subset of the warnings that make the data too poor to emit a buy/sell signal on
