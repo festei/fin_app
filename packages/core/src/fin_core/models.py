@@ -6,7 +6,7 @@ whether it is a deterministic function today or an LLM agent later.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -39,13 +39,24 @@ class ScoreResult(BaseModel):
         return [c for c in self.criteria if not c.passed]
 
 
+class AnnualPoint(BaseModel):
+    period_end: date
+    value: float
+
+
 class SecurityMetrics(BaseModel):
-    """Point-in-time metrics for one security. Missing values are ``None``."""
+    """Point-in-time metrics for one security. Missing values are ``None``.
+
+    The scalar ratios are what the Graham node uses; ``annual`` carries the fiscal-year history
+    (oldest first) that the multi-year scorers (Buffett, Piotroski, Altman) work from.
+    """
 
     ticker: str
     as_of: datetime
     price: float | None = None
-    pe: float | None = None
+    price_date: date | None = None
+    pe: float | None = None  # price / latest fiscal-year diluted EPS
+    pe_avg3: float | None = None  # price / average of the latest 3 fiscal years (Graham's P/E)
     pb: float | None = None
     current_ratio: float | None = None
     debt_to_equity: float | None = None
@@ -54,6 +65,12 @@ class SecurityMetrics(BaseModel):
     dividend_years: int | None = None
     eps: float | None = None
     book_value_per_share: float | None = None
+    latest_fiscal_year_end: date | None = None
+    annual: dict[str, list[AnnualPoint]] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)  # data-quality notes, never silent gaps
+    # Subset of the warnings that make the data too poor to emit a buy/sell signal on
+    # (no or stale price/fundamentals). The graph's decide node withholds signals while set.
+    signal_blockers: list[str] = Field(default_factory=list)
 
 
 SignalKind = Literal["buy", "sell", "watch", "emerging"]

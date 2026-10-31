@@ -33,6 +33,14 @@ CONCEPT_TAGS: dict[str, tuple[str, ...]] = {
         "us-gaap/CommonStockDividendsPerShareDeclared",
         "us-gaap/CommonStockDividendsPerShareCashPaid",
     ),
+    "GrossProfit": ("us-gaap/GrossProfit",),
+    "RetainedEarnings": ("us-gaap/RetainedEarningsAccumulatedDeficit",),
+    "NetCashFromOperating": ("us-gaap/NetCashProvidedByUsedInOperatingActivities",),
+    "Capex": ("us-gaap/PaymentsToAcquirePropertyPlantAndEquipment",),
+    "DepreciationAmortization": (
+        "us-gaap/DepreciationDepletionAndAmortization",
+        "us-gaap/DepreciationAndAmortization",
+    ),
     "SharesOutstanding": (
         "dei/EntityCommonStockSharesOutstanding",
         "us-gaap/CommonStockSharesOutstanding",

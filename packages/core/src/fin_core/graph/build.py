@@ -57,6 +57,11 @@ def decide_node(state: dict[str, Any]) -> dict[str, Any]:
         kind = "emerging" if prev is None else "buy"
     elif prev is not None and prev >= SELL_THRESHOLD and now < SELL_THRESHOLD:
         kind = "sell"
+    blockers = list(m.signal_blockers)
+    if blockers:
+        # Stale or missing price/fundamentals must not produce a buy/sell: say why instead.
+        note = f"Signal withheld: {'; '.join(blockers)}."
+        return {"signal": None, "explanation": f"{state.get('explanation', '')} {note}".strip()}
     signal = (
         Signal(
             ticker=m.ticker,

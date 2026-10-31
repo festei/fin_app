@@ -58,11 +58,25 @@ def _ge(name: str, actual: float | None, limit: float) -> Criterion:
     return Criterion(name=name, passed=actual >= limit, actual=actual, threshold=limit)
 
 
+def _graham_pe(m: SecurityMetrics) -> tuple[float | None, str]:
+    """Graham's P/E uses average earnings of about three years. Fall back to the latest year
+    when fewer are available, and say so on the criterion."""
+    if m.pe_avg3 is not None:
+        return m.pe_avg3, "price / 3-year average EPS"
+    if m.pe is not None:
+        return m.pe, "price / latest-year EPS (3-year average unavailable)"
+    return None, ""
+
+
 def score_graham(m: SecurityMetrics, cfg: dict[str, Any]) -> ScoreResult:
+    pe, pe_basis = _graham_pe(m)
+    pe_criterion = _positive_lt("P/E below limit", pe, cfg["max_pe"])
+    if pe_basis:
+        pe_criterion.detail = f"{pe_criterion.detail}; {pe_basis}".lstrip("; ")
     criteria = [
-        _positive_lt("P/E below limit", m.pe, cfg["max_pe"]),
+        pe_criterion,
         _positive_lt("P/B below limit", m.pb, cfg["max_pb"]),
-        _pe_times_pb(m.pe, m.pb, cfg["max_pe_times_pb"]),
+        _pe_times_pb(pe, m.pb, cfg["max_pe_times_pb"]),
         _ge("Current ratio at least", m.current_ratio, cfg["min_current_ratio"]),
         _positive_lt(
             "Debt/equity below limit", m.debt_to_equity, cfg["max_debt_to_equity"], allow_zero=True
