@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from fin_core.providers.base import ProviderError, RateLimitError
+from fin_core.providers.base import AccessDeniedError, ProviderError, RateLimitError
 from fin_core.providers.edgar import EdgarClient, normalize_facts, pad_cik
 
 UA = "fin-app tests tester@example.com"
@@ -55,11 +55,21 @@ def test_company_facts_url_uses_padded_cik(fixture_json):
 
 @pytest.mark.parametrize(
     "status, exc",
-    [(404, ProviderError), (403, RateLimitError), (429, RateLimitError), (500, ProviderError)],
+    [(404, ProviderError), (429, RateLimitError), (500, ProviderError)],
 )
 def test_http_errors_map_to_provider_errors(status, exc):
     with pytest.raises(exc):
         edgar(lambda r: httpx.Response(status)).company_facts(1)
+
+
+def test_403_for_rate_limit_and_403_for_bad_user_agent_are_told_apart():
+    rate = "<html><body>Request Rate Threshold Exceeded</body></html>"
+    agent = "<html><body>Your Request Originates from an Undeclared Automated Tool</body></html>"
+    with pytest.raises(RateLimitError, match="rate threshold"):
+        edgar(lambda r: httpx.Response(403, text=rate)).company_facts(1)
+    with pytest.raises(AccessDeniedError, match="SEC_USER_AGENT") as exc:
+        edgar(lambda r: httpx.Response(403, text=agent)).company_facts(1)
+    assert not isinstance(exc.value, RateLimitError)  # configuration problem, not throttling
 
 
 def test_unexpected_shape_and_non_json():

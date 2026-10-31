@@ -39,6 +39,8 @@ def _check(summary) -> dict:
         summary.rows,
         len(summary.failed),
     )
+    if summary.rebackfilled:
+        log.info("price history re-fetched after a restatement: %s", ", ".join(summary.rebackfilled))
     for key, reason in summary.failed.items():
         log.warning("%s failed: %s", key, reason)
     if summary.status == "failed":

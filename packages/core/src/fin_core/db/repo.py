@@ -34,28 +34,31 @@ def _chunks(rows: Sequence[dict[str, Any]], size: int = 2000) -> Iterable[Sequen
 
 
 def upsert_securities(session: Session, rows: Sequence[dict[str, Any]]) -> int:
-    """Insert new tickers, update cik/name/kind/sector/active of existing ones."""
+    """Insert new tickers; for existing ones update only the columns a row provides.
+
+    A column that is absent from a row is left untouched on conflict, so syncing the universe
+    (which has no ``cik``) never wipes a CIK that was resolved from the SEC. Passing a column
+    explicitly, even as ``None``, does overwrite it. Rows are grouped by the columns they
+    provide so each group is one executemany.
+    """
     if not rows:
         return 0
-    stmt = _insert(session, Security)
-    stmt = stmt.on_conflict_do_update(
-        index_elements=["ticker"],
-        set_={c: stmt.excluded[c] for c in ("cik", "name", "kind", "sector", "active")},
-    )
-    # Normalise keys so one executemany works for rows with different optional fields.
-    norm = [
-        {
-            "ticker": r["ticker"].upper(),
-            "cik": r.get("cik"),
-            "name": r.get("name"),
-            "kind": r.get("kind", "stock"),
-            "sector": r.get("sector"),
-            "active": r.get("active", True),
-        }
-        for r in rows
-    ]
-    session.execute(stmt, norm)
-    return len(norm)
+    optional = ("cik", "name", "kind", "sector", "active")
+    groups: dict[tuple[str, ...], list[dict[str, Any]]] = {}
+    for r in rows:
+        provided = tuple(c for c in optional if c in r)
+        row = {"ticker": r["ticker"].upper(), **{c: r[c] for c in provided}}
+        groups.setdefault(provided, []).append(row)
+    for provided, group in groups.items():
+        stmt = _insert(session, Security)
+        if provided:
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["ticker"], set_={c: stmt.excluded[c] for c in provided}
+            )
+        else:
+            stmt = stmt.on_conflict_do_nothing(index_elements=["ticker"])
+        session.execute(stmt, group)
+    return len(rows)
 
 
 def get_security(session: Session, ticker: str) -> Security | None:

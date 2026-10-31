@@ -45,7 +45,7 @@ def healthz() -> dict[str, str]:
 
 @lru_cache
 def _engine(url: str):
-    return make_engine(url)
+    return make_engine(url, connect_timeout=3)  # a probe must not hang
 
 
 @app.get("/readyz")

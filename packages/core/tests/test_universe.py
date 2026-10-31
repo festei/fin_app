@@ -54,3 +54,16 @@ def test_bond_series_rejects_bad_config(tmp_path):
     p.write_text("series:\n  - {id: A, kind: price}\n")
     with pytest.raises(ValueError, match="kind must be"):
         load_bond_series(p)
+
+
+def test_sync_does_not_wipe_a_resolved_cik(tmp_path):
+    url = f"sqlite:///{tmp_path / 'cik.db'}"
+    migrate.upgrade(url)
+    engine = make_engine(url)
+    with session_scope(engine) as s:
+        sync_universe(s)
+        repo.upsert_securities(s, [{"ticker": "IBM", "cik": "0000051143"}])  # as EDGAR resolves it
+    with session_scope(engine) as s:
+        sync_universe(s)  # the daily sync: the YAML has no cik
+    with session_scope(engine) as s:
+        assert repo.get_security(s, "IBM").cik == "0000051143"

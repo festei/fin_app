@@ -160,3 +160,53 @@ def test_database_url_requires_configuration(monkeypatch):
         monkeypatch.delenv(k, raising=False)
     with pytest.raises(RuntimeError, match="not configured"):
         database_url()
+
+
+def test_upsert_securities_leaves_unprovided_columns_alone(engine):
+    with session_scope(engine) as s:
+        repo.upsert_securities(
+            s,
+            [
+                {
+                    "ticker": "IBM",
+                    "name": "IBM",
+                    "sector": "Tech",
+                    "cik": "0000051143",
+                    "active": False,
+                }
+            ],
+        )
+        repo.upsert_securities(s, [{"ticker": "ibm"}])  # nothing but the key
+        repo.upsert_securities(s, [{"ticker": "IBM", "name": "International Business Machines"}])
+    with session_scope(engine) as s:
+        ibm = repo.get_security(s, "IBM")
+        assert ibm.cik == "0000051143"  # a sync without cik must not wipe a resolved CIK
+        assert ibm.sector == "Tech" and ibm.active is False
+        assert ibm.name == "International Business Machines"  # provided columns do update
+
+
+def test_upsert_securities_explicit_none_overwrites_and_mixed_batches_work(engine):
+    with session_scope(engine) as s:
+        repo.upsert_securities(s, [{"ticker": "KO", "sector": "Staples", "cik": "1"}])
+        repo.upsert_securities(
+            s,
+            [{"ticker": "KO", "sector": None}, {"ticker": "PG", "name": "P&G"}, {"ticker": "XOM"}],
+        )
+    with session_scope(engine) as s:
+        ko = repo.get_security(s, "KO")
+        assert ko.sector is None and ko.cik == "1"
+        assert repo.get_security(s, "PG").name == "P&G"
+        assert repo.get_security(s, "XOM").kind == "stock"  # model default applies to new rows
+
+
+def test_make_engine_sets_a_connect_timeout_for_server_databases(monkeypatch):
+    from fin_core.db import session as session_mod
+
+    captured = {}
+    monkeypatch.setattr(
+        session_mod, "create_engine", lambda url, **kw: captured.update(kw) or object()
+    )
+    session_mod.make_engine("postgresql+psycopg://u:p@db:5432/x", connect_timeout=3)
+    assert captured["connect_args"] == {"connect_timeout": 3}
+    session_mod.make_engine("sqlite:///x.db")
+    assert captured["connect_args"] == {}

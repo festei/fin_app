@@ -68,7 +68,7 @@ services:
   flows:
     <<: *common
     image: fin-flows:${TAG:?set TAG}
-    command: python -m fin_flows.scoring
+    command: python -m fin_flows.ingestion
     environment:
       <<: *dbenv
       PREFECT_API_URL: http://prefect:4200/api

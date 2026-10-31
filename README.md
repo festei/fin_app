@@ -58,6 +58,16 @@ at the given date (no look-ahead).
 * `flows/fin_flows/ingestion.py`: Prefect flows (`python -m fin_flows.ingestion` serves the schedules).
 * Config: `config/universe.yml`, `config/bond_series.yml`.
 
+**Run status.** A run is `failed` until it completes normally, so a crash is never recorded as `ok`.
+One failing ticker/series (including a database error) makes the run `partial`; rate-limit and
+access-denied responses abort it. Rows left `running` by a dead process are marked failed by the next run.
+
+**Price adjustment (known limitation).** Prices are the source's split/dividend-*adjusted* prices as of
+fetch time. When a refresh shows a stored bar was restated, the whole history is re-fetched so the series
+stays on one basis (`rebackfilled` in the run summary). They are not *as-traded* prices, so a point-in-time
+backtest of price-based valuation needs raw OHLC plus adjustment factors; that is planned with the backtester,
+before Phase 2 scorers are validated historically.
+
 **Status:** both providers were written from the public API documentation and tested only against
 synthetic fixtures with the documented response shape (`packages/core/tests/fixtures`). They have not
 been run against the live SEC/FRED APIs yet. Verify where those hosts are reachable:

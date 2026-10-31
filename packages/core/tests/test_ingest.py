@@ -1,10 +1,11 @@
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import httpx
 import pandas as pd
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 
 from fin_core import ingest
 from fin_core.db import repo
@@ -235,3 +236,160 @@ def test_prices_rate_limit_aborts(engine):
     summary = ingest.ingest_prices(engine, provider)
     assert summary.status == "failed" and "MISSING" in summary.failed
     assert runs(engine)[-1].source == "prices"
+
+
+# --- run bookkeeping (review: a crash must never be recorded as ok) --------------------------
+
+
+def test_database_error_on_one_ticker_is_isolated_and_the_run_is_not_ok(
+    engine, fixture_json, monkeypatch
+):
+    with session_scope(engine) as s:
+        repo.upsert_securities(s, [{"ticker": "TEST2", "cik": "0001000002"}])
+        broken_id = repo.get_security(s, "TEST").id
+    real = repo.upsert_facts
+
+    def flaky(session, security_id, facts):
+        if security_id == broken_id:
+            raise OperationalError("INSERT", {}, Exception("connection dropped"))
+        return real(session, security_id, facts)
+
+    monkeypatch.setattr(ingest.repo, "upsert_facts", flaky)
+    summary = ingest.ingest_fundamentals(engine, edgar_ok(fixture_json), ["TEST", "TEST2"])
+
+    assert summary.status == "partial"
+    assert "OperationalError" in summary.failed["TEST"]
+    assert "TEST2" not in summary.failed and summary.rows > 0  # the other ticker still ran
+    with session_scope(engine) as s:
+        assert (
+            s.query(FundamentalFact).filter_by(security_id=repo.get_security(s, "TEST2").id).count()
+            > 0
+        )
+    assert runs(engine)[-1].status == "partial"
+
+
+def test_database_error_on_one_series_is_isolated(engine, fixture_json, monkeypatch):
+    real = repo.upsert_yields
+
+    def flaky(session, series_id, points):
+        if series_id == "DGS2":
+            raise OperationalError("INSERT", {}, Exception("boom"))
+        return real(session, series_id, points)
+
+    monkeypatch.setattr(ingest.repo, "upsert_yields", flaky)
+    fred = fred_with(lambda r: httpx.Response(200, json=fixture_json("fred_dgs10_synthetic.json")))
+    summary = ingest.ingest_yields(engine, fred, ["DGS2", "DGS10"])
+    assert summary.status == "partial" and list(summary.failed) == ["DGS2"]
+    with session_scope(engine) as s:
+        assert repo.latest_yield(s, "DGS10") is not None
+
+
+def test_a_crash_inside_a_job_is_recorded_as_failed_and_reraised(engine, monkeypatch):
+    def boom(session, **kw):
+        raise RuntimeError("database went away")
+
+    monkeypatch.setattr(ingest.repo, "list_securities", boom)
+    with pytest.raises(RuntimeError, match="went away"):
+        ingest.ingest_prices(engine, FakePrices())
+    run = runs(engine)[-1]
+    assert run.status == "failed"  # previously this was written as "ok"
+    assert run.finished_at is not None and "went away" in run.error
+
+
+def test_stale_running_rows_are_marked_failed_by_the_next_run(engine):
+    now = datetime.now(UTC)
+    with session_scope(engine) as s:
+        old, recent = now - timedelta(hours=10), now - timedelta(minutes=1)
+        s.add(IngestionRun(source="edgar", status="running", started_at=old))
+        s.add(IngestionRun(source="prices", status="running", started_at=recent))
+    ingest.ingest_yields(
+        engine, fred_with(lambda r: httpx.Response(200, json={"observations": []})), []
+    )
+    by_source = {r.source: r for r in runs(engine)}
+    assert by_source["edgar"].status == "failed" and "stale" in by_source["edgar"].error
+    assert by_source["prices"].status == "running"  # a recent run may still be alive
+
+
+def test_edgar_access_denied_aborts_the_run_with_a_clear_reason(engine, fixture_json):
+    def handler(request):
+        if request.url.path.endswith("company_tickers.json"):
+            return httpx.Response(200, json=fixture_json("company_tickers_synthetic.json"))
+        return httpx.Response(403, text="Undeclared Automated Tool")
+
+    summary = ingest.ingest_fundamentals(engine, edgar_with(handler))
+    assert summary.status == "failed"
+    assert "SEC_USER_AGENT" in summary.failed["TEST"]
+
+
+# --- price restatements (review: adjusted history must not get a discontinuity) -------------
+
+
+class PeriodPrices:
+    """Returns a different frame per requested period and records the calls."""
+
+    def __init__(self, by_period):
+        self.by_period, self.calls = by_period, []
+
+    def history(self, ticker, period="max"):
+        self.calls.append((ticker, period))
+        return self.by_period[period]
+
+    def last_price(self, ticker):  # pragma: no cover
+        return None
+
+
+def closes(engine, ticker="TEST"):
+    with session_scope(engine) as s:
+        sid = repo.get_security(s, ticker).id
+        return {
+            b.ts.date().isoformat(): b.close for b in s.query(PriceBar).filter_by(security_id=sid)
+        }
+
+
+def test_split_adjusted_refresh_triggers_a_full_rebackfill(engine):
+    first = PeriodPrices(
+        {"max": frame([("2024-12-31", 98.0, 98.0, 1), ("2025-01-02", 100.0, 100.0, 1)])}
+    )
+    ingest.ingest_prices(engine, first, ["TEST"])
+    assert closes(engine) == {"2024-12-31": 98.0, "2025-01-02": 100.0}
+
+    # a 2:1 split: the source now reports every historical close halved
+    second = PeriodPrices(
+        {
+            "1mo": frame([("2025-01-02", 50.0, 50.0, 2), ("2025-01-03", 51.0, 51.0, 2)]),
+            "max": frame(
+                [
+                    ("2024-12-31", 49.0, 49.0, 2),
+                    ("2025-01-02", 50.0, 50.0, 2),
+                    ("2025-01-03", 51.0, 51.0, 2),
+                ]
+            ),
+        }
+    )
+    summary = ingest.ingest_prices(engine, second, ["TEST"])
+    assert summary.rebackfilled == ["TEST"]
+    assert [p for _, p in second.calls] == ["1mo", "max"]
+    # the older bar moved to the new basis too: no 98 -> 50 cliff left in the series
+    assert closes(engine) == {"2024-12-31": 49.0, "2025-01-02": 50.0, "2025-01-03": 51.0}
+
+
+def test_unchanged_prices_only_use_the_cheap_refresh_window(engine):
+    rows = [("2025-01-02", 100.0, 100.0, 1), ("2025-01-03", 101.0, 101.0, 1)]
+    provider = PeriodPrices({"max": frame(rows), "1mo": frame(rows)})
+    ingest.ingest_prices(engine, provider, ["TEST"])
+    provider.calls.clear()
+    summary = ingest.ingest_prices(engine, provider, ["TEST"])
+    assert summary.rebackfilled == [] and [p for _, p in provider.calls] == ["1mo"]
+
+
+def test_a_new_bar_alone_is_not_mistaken_for_a_restatement(engine):
+    provider = PeriodPrices(
+        {
+            "max": frame([("2025-01-02", 100.0, 100.0, 1)]),
+            "1mo": frame([("2025-01-02", 100.0, 100.0, 1), ("2025-01-03", 103.0, 103.0, 1)]),
+        }
+    )
+    ingest.ingest_prices(engine, provider, ["TEST"])
+    summary = ingest.ingest_prices(engine, provider, ["TEST"])
+    assert summary.rebackfilled == []
+    assert closes(engine)["2025-01-03"] == 103.0

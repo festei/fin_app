@@ -31,7 +31,7 @@ from typing import Any
 
 import httpx
 
-from fin_core.providers.base import ProviderError, RateLimitError
+from fin_core.providers.base import AccessDeniedError, ProviderError, RateLimitError
 from fin_core.providers.edgar_concepts import PERIODIC_FORMS, TAG_TO_CONCEPT
 
 TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
@@ -72,8 +72,18 @@ class EdgarClient:
             raise ProviderError(f"EDGAR request failed: {type(exc).__name__}") from None
         if resp.status_code == 404:
             raise ProviderError(f"EDGAR: not found: {url}")
-        if resp.status_code in (403, 429):
-            raise RateLimitError(f"EDGAR: HTTP {resp.status_code} (blocked or rate limited)")
+        if resp.status_code == 429:
+            raise RateLimitError("EDGAR: HTTP 429 (rate limited)")
+        if resp.status_code == 403:
+            # The SEC answers 403 both for an undeclared/invalid User-Agent and when the request
+            # rate limit is exceeded (a temporary block). The HTML body tells them apart; this
+            # heuristic is from the SEC's documented pages and not verified against the live site.
+            body = resp.text.lower()
+            if "rate" in body and "threshold" in body:
+                raise RateLimitError("EDGAR: HTTP 403 request rate threshold exceeded (blocked)")
+            raise AccessDeniedError(
+                "EDGAR: HTTP 403 access denied: check the SEC_USER_AGENT contact details"
+            )
         if resp.status_code >= 400:
             raise ProviderError(f"EDGAR: HTTP {resp.status_code} for {url}")
         try:

@@ -32,8 +32,12 @@ def database_configured() -> bool:
     return bool(env.get("DATABASE_URL") or (env.get("POSTGRES_USER") and env.get("POSTGRES_DB")))
 
 
-def make_engine(url: str | None = None) -> Engine:
-    return create_engine(url or database_url(), pool_pre_ping=True)
+def make_engine(url: str | None = None, connect_timeout: int = 10) -> Engine:
+    """``connect_timeout`` (seconds) stops an unreachable host from hanging callers; it only
+    applies to server databases (SQLite has no network connection)."""
+    url = url or database_url()
+    connect_args = {} if url.startswith("sqlite") else {"connect_timeout": connect_timeout}
+    return create_engine(url, pool_pre_ping=True, connect_args=connect_args)
 
 
 @contextmanager
