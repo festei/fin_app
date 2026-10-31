@@ -1,8 +1,9 @@
 """Greenblatt node. Base company, hand-computed:
 
 EBIT (operating income) 180 / 190 / 200 for 2022-2024; price 10 x 100 shares = market cap 1000
-cash 100, long-term debt 200, debt due within a year 50
-  enterprise value = 1000 + 200 + 50 - 100 = 1150       earnings yield = 200 / 1150 = 0.1739
+cash 100, total debt 250 (200 noncurrent + 50 due within a year, the 50 also sits in
+current liabilities)
+  enterprise value = 1000 + 250 - 100 = 1150       earnings yield = 200 / 1150 = 0.1739
 current assets 500, current liabilities 300, net fixed assets 400
   net working capital = (500 - 100) - (300 - 50) = 150   capital = 150 + 400 = 550
   return on capital = 200 / 550 = 0.3636
@@ -42,7 +43,7 @@ def company(**overrides) -> SecurityMetrics:
         "AssetsCurrent": one(500),
         "LiabilitiesCurrent": one(300),
         "Cash": one(100),
-        "LongTermDebt": one(200),
+        "TotalDebt": one(250),  # 200 noncurrent + 50 due within a year
         "LongTermDebtCurrent": one(50),
         "PropertyPlantAndEquipmentNet": one(400),
         "SharesOutstanding": [AnnualPoint(period_end=date(2025, 1, 31), value=100.0)],
@@ -107,7 +108,7 @@ def test_missing_cash_is_zero_when_the_balance_sheet_exists_and_says_so():
 
 def test_without_any_balance_sheet_the_yield_has_no_data():
     bare = company(annual={k: [] for k in (
-        "Assets", "AssetsCurrent", "LiabilitiesCurrent", "Cash", "LongTermDebt",
+        "Assets", "AssetsCurrent", "LiabilitiesCurrent", "Cash", "TotalDebt",
         "LongTermDebtCurrent", "PropertyPlantAndEquipmentNet")})  # fmt: skip
     r = score_greenblatt(bare, CFG)
     assert criterion(r, EY).detail.startswith("no data")
@@ -146,9 +147,9 @@ def test_other_structural_abstentions():
 # --- end to end: the new concepts flow from stored facts into the node ------------------------
 
 
-def fact(concept, value, end, *, unit="USD", instant=False, filed=None):
+def fact(concept, value, end, *, unit="USD", instant=False, filed=None, tag=None):
     return dict(
-        concept=concept, tag=CONCEPT_TAGS[concept][0], unit=unit,
+        concept=concept, tag=tag or CONCEPT_TAGS[concept][0], unit=unit,
         period_start=end if instant else date(end.year, 1, 1), period_end=end, instant=instant,
         fiscal_year=end.year, fiscal_period="FY", form="10-K",
         filed=filed or date(end.year + 1, 2, 15), accession=f"{concept[:9]}-{end.year}",
@@ -177,3 +178,29 @@ def test_greenblatt_scores_a_company_from_stored_facts(raw_engine):
     # the four concepts added for these nodes were classified and reached the metrics
     for concept in ("InventoryNet", "PropertyPlantAndEquipmentNet", "LongTermDebtCurrent"):
         assert out["metrics"].annual[concept], concept
+
+
+@pytest.mark.parametrize(
+    "tag_index, reported",
+    [(0, 200), (1, 250)],  # noncurrent tag (200 + 50 current) or total tag (250, includes it)
+)
+def test_current_debt_is_never_counted_twice(raw_engine, tag_index, reported):
+    rows = [fact("OperatingIncome", v, y) for y, v in ((FY22, 180), (FY23, 190), (FY24, 200))]
+    rows += [fact(c, v, FY24, instant=True) for c, v in (
+        ("Assets", 1500), ("AssetsCurrent", 500), ("LiabilitiesCurrent", 300), ("Cash", 100),
+        ("LongTermDebtCurrent", 50), ("PropertyPlantAndEquipmentNet", 400))]  # fmt: skip
+    rows.append(fact("LongTermDebt", reported, FY24, instant=True,
+                     tag=CONCEPT_TAGS["LongTermDebt"][tag_index]))  # fmt: skip
+    rows.append(fact("SharesOutstanding", 100, date(2025, 1, 31), unit="shares", instant=True,
+                     filed=date(2025, 2, 15)))  # fmt: skip
+    with session_scope(raw_engine) as s:
+        repo.upsert_securities(s, [{"ticker": f"DC{tag_index}"}])
+        sid = repo.get_security(s, f"DC{tag_index}").id
+        repo.upsert_facts(s, sid, rows)
+        repo.upsert_prices(s, sid, [dict(ts=datetime(2025, 3, 3, 21, tzinfo=UTC), open=10.0,
+                                         high=10.0, low=10.0, close=10.0, volume=1)])  # fmt: skip
+        out = score_security(s, f"DC{tag_index}", date(2025, 3, 10))
+    g = out["philosophy_results"]["greenblatt"]
+    # EV = 1000 + 250 - 100 = 1150 either way (300 would mean the 50 was counted twice)
+    assert criterion(g, EY).actual == pytest.approx(200 / 1150, abs=1e-4)
+    assert out["metrics"].annual["TotalDebt"][-1].value == 250.0

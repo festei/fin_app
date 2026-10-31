@@ -20,7 +20,8 @@ class GraphState(TypedDict, total=False):
     guardrail_veto: bool
     guardrail_results: dict[str, ScoreResult]
     guardrail_reasons: list[str]
+    guardrail_notes: list[str]
     all_abstained: bool
-    conviction: float
+    conviction: float | None  # None = nothing could be evaluated (not a score of 0)
     explanation: str
     signal: Signal | None

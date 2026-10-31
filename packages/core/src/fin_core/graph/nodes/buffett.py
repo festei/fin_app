@@ -13,9 +13,11 @@ Criteria (thresholds in ``config/philosophies.yml``):
 7. margin of safety: market cap versus an "earnings power" value of owner earnings
 
 Deliberately simplified (documented, not hidden): owner earnings are net income + D&A - capex
-(the working-capital term is not modelled), and intrinsic value is owner earnings capitalised at
-a fixed discount rate (optionally with growth), not a forecast. "Retained earnings must create
-at least $1 of market value per $1 retained" needs market-value history and is not scored yet.
+(the working-capital term is not modelled, and total capex is deducted, not just
+maintenance capex, which makes it conservative), and intrinsic value is owner earnings
+capitalised at a fixed discount rate (optionally with growth), not a forecast. "Retained
+earnings must create at least $1 of market value per $1 retained" needs market-value history
+and is not scored yet.
 """
 
 from __future__ import annotations
@@ -101,7 +103,7 @@ def _positive_earnings(m, cfg, window) -> Criterion:
 def _debt_payback(m, cfg) -> Criterion:
     name = "Debt repayable from earnings"
     limit = cfg["max_debt_payback_years"]
-    ni, debt_s, assets = _series(m, "NetIncome"), _series(m, "LongTermDebt"), _series(m, "Assets")
+    ni, debt_s, assets = _series(m, "NetIncome"), _series(m, "TotalDebt"), _series(m, "Assets")
     if not ni:
         return _no_data(name, limit, "no net income")
     fy = max(ni)
@@ -109,7 +111,7 @@ def _debt_payback(m, cfg) -> Criterion:
     if debt is None:
         if fy not in assets:
             return _no_data(name, limit, f"no balance sheet for fiscal year {fy}")
-        debt, note = 0.0, "; no long-term debt reported, treated as 0"
+        debt, note = 0.0, "; no debt reported, treated as 0"
     if debt <= 0:
         return Criterion(
             name=name, passed=True, actual=0.0, threshold=limit, detail=f"no debt{note}"
@@ -197,6 +199,13 @@ def _margin_of_safety(m, cfg) -> tuple[Criterion, list[str]]:
 
 
 def score_buffett(m: SecurityMetrics, cfg: dict[str, Any]) -> ScoreResult:
+    if m.sector in cfg.get("skip_sectors", []):
+        return ScoreResult(
+            philosophy=NAME,
+            score=0.0,
+            evaluated=False,
+            explanation=f"Not evaluated: these criteria do not fit the {m.sector} sector.",
+        )
     window = cfg["window_years"]
     history = _recent(
         [y for y in _series(m, "NetIncome") if y in _series(m, "StockholdersEquity")], window

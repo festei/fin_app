@@ -75,6 +75,8 @@ def _inventory_vs_sales(m: SecurityMetrics, cfg: dict[str, Any]) -> Criterion | 
 
 
 def score_lynch(m: SecurityMetrics, cfg: dict[str, Any]) -> ScoreResult:
+    if m.sector in cfg.get("skip_sectors", []):
+        return _abstain(f"debt and growth criteria do not fit the {m.sector} sector")
     eps_all = sorted((p.period_end, p.value) for p in m.annual.get("EpsDiluted", []))
     years = recent_years([d for d, _ in eps_all], cfg["window_years"])
     eps = [(d, v) for d, v in eps_all if d in years]

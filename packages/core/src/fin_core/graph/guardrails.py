@@ -15,7 +15,8 @@ it is robust to share-class problems):
     Z'' = 6.56*X1 + 3.26*X2 + 6.72*X3 + 1.05*X4
     X1 working capital / assets, X2 retained earnings / assets, X3 EBIT / assets
     (EBIT approximated by operating income), X4 book equity / total liabilities.
-Zones: above 2.6 safe, 1.1-2.6 grey, below 1.1 distress.
+Zones: above 2.6 safe, 1.1-2.6 grey, below 1.1 distress. Distress vetoes only when the
+company is not visibly profitable and cash-generative (see ``guardrails_node``).
 
 Beneish M-score (earnings manipulation) needs receivables, SG&A and PP&E and is not built yet.
 """
@@ -59,7 +60,7 @@ def piotroski(m: SecurityMetrics, cfg: dict[str, Any]) -> tuple[ScoreResult, int
     prev = previous_year(ta, fy)
 
     cfo = series_by_year(m, "NetCashFromOperating")
-    ltd = series_by_year(m, "LongTermDebt")
+    ltd = series_by_year(m, "TotalDebt")
     ca, cl = series_by_year(m, "AssetsCurrent"), series_by_year(m, "LiabilitiesCurrent")
     gp, rev = series_by_year(m, "GrossProfit"), series_by_year(m, "Revenue")
 
@@ -183,32 +184,69 @@ def altman(m: SecurityMetrics, cfg: dict[str, Any]) -> tuple[ScoreResult, float 
     )
 
 
+def _profitable_and_cash_generative(m: SecurityMetrics) -> bool:
+    """Latest fiscal year has positive net income AND positive operating cash flow."""
+    ni, cfo = series_by_year(m, "NetIncome"), series_by_year(m, "NetCashFromOperating")
+    common = [y for y in ni if y in cfo]
+    return bool(common) and ni[max(common)] > 0 and cfo[max(common)] > 0
+
+
 def guardrails_node(state: dict[str, Any]) -> dict[str, Any]:
-    """Cap conviction (via ``guardrail_veto``) for very weak or distressed companies."""
+    """Cap conviction (via ``guardrail_veto``) for very weak or distressed companies.
+
+    Altman Z'' alone can be fooled: a profitable company that returns cash through large
+    buybacks has negative retained earnings and equity, which pushes Z'' into the distress
+    zone (McDonald's, Starbucks, ...). So with ``altman.require_corroboration`` the distress
+    zone vetoes only if the company is NOT visibly profitable and cash-generative; otherwise
+    it becomes a note. A very weak Piotroski score vetoes on its own. When health cannot be
+    shown (no cash-flow data) the distress zone still vetoes.
+    """
     cfg = state["config"].get("guardrails", {})
     m: SecurityMetrics = state["metrics"]
+    empty = {"guardrail_veto": False, "guardrail_reasons": [], "guardrail_notes": []}
     if not cfg.get("enabled", True):
-        return {"guardrail_veto": False, "guardrail_results": {}, "guardrail_reasons": []}
+        return {**empty, "guardrail_results": {}}
     if m.sector in cfg.get("skip_sectors", []):
         why = f"not meaningful for the {m.sector} sector"
         return {
-            "guardrail_veto": False,
+            **empty,
             "guardrail_results": {
                 PIOTROSKI: _abstain(PIOTROSKI, why),
                 ALTMAN: _abstain(ALTMAN, why),
             },
-            "guardrail_reasons": [],
         }
 
     p_result, passes, evaluable = piotroski(m, cfg)
     a_result, z = altman(m, cfg)
     reasons: list[str] = []
-    if p_result.evaluated and passes <= cfg["piotroski"]["veto_at_or_below"]:
+    notes: list[str] = []
+
+    weak = (
+        p_result.evaluated
+        and evaluable > 0
+        and passes / evaluable <= cfg["piotroski"]["veto_share_at_or_below"]
+    )
+    if weak:
         reasons.append(f"Piotroski F-score {passes} of {evaluable} evaluable signals")
+
     if z is not None and z < cfg["altman"]["distress_below"]:
-        reasons.append(f"Altman Z'' {z:.2f} is in the distress zone")
+        exempt = (
+            cfg["altman"].get("require_corroboration", True)
+            and not weak
+            and _profitable_and_cash_generative(m)
+        )
+        if exempt:
+            note = (
+                f"Altman Z'' {z:.2f} is in the distress zone but not corroborated: net income "
+                "and operating cash flow are positive (typical of buyback-driven negative equity)"
+            )
+            notes.append(note)
+            a_result.evidence.append(note)
+        else:
+            reasons.append(f"Altman Z'' {z:.2f} is in the distress zone")
     return {
         "guardrail_veto": bool(reasons),
         "guardrail_results": {PIOTROSKI: p_result, ALTMAN: a_result},
         "guardrail_reasons": reasons,
+        "guardrail_notes": notes,
     }

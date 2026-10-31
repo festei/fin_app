@@ -42,7 +42,7 @@ def complete_company(**overrides) -> SecurityMetrics:
         "AssetsCurrent": last_year(500),
         "LiabilitiesCurrent": last_year(300),
         "Cash": last_year(100),
-        "LongTermDebt": last_year(200),
+        "TotalDebt": last_year(200),
         "LongTermDebtCurrent": last_year(50),
         "PropertyPlantAndEquipmentNet": last_year(400),
         "SharesOutstanding": [
@@ -104,7 +104,10 @@ def test_philosophies_with_no_history_abstain_and_are_named():
     )
 
 
-def test_a_financial_company_skips_greenblatt_only():
+def test_a_financial_company_skips_the_balance_sheet_philosophies():
     out = run(complete_company(sector="Financials"))
-    assert out["philosophy_results"]["greenblatt"].evaluated is False
-    assert out["philosophy_results"]["lynch"].evaluated is True
+    results = out["philosophy_results"]
+    skipped = {n for n, r in results.items() if not r.evaluated}
+    assert skipped == {"buffett", "lynch", "greenblatt"}  # debt/capex/margin/EV logic
+    assert results["graham"].evaluated and results["fisher"].evaluated
+    assert "Not evaluated (insufficient data): buffett, greenblatt, lynch" in out["explanation"]

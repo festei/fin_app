@@ -172,3 +172,24 @@ def test_dispose_engines_closes_and_forgets_the_cached_engines(monkeypatch, tmp_
     assert main._engines  # an engine was created and cached
     dispose_engines()
     assert main._engines == {}
+
+
+def test_response_carries_all_abstained_and_allows_no_conviction():
+    from fin_api.main import ScoreResponse
+
+    body = {
+        "metrics": {
+            "ticker": "T", "as_of": "2025-01-01T00:00:00", "pe": 10, "pb": 1.2,
+            "current_ratio": 2.5, "debt_to_equity": 0.4, "dividend_years": 20,
+            "earnings_growth": 0.05,
+        }
+    }  # fmt: skip
+    data = client.post("/api/score", json=body).json()
+    assert data["all_abstained"] is False and data["conviction"] == 100.0
+
+    # when no philosophy can be evaluated the conviction is null ("no view"), never 0.0
+    none = ScoreResponse(
+        conviction=None, all_abstained=True, explanation="No philosophy could be evaluated.",
+        philosophy_results={}, signal=None,
+    )  # fmt: skip
+    assert none.model_dump()["conviction"] is None and none.all_abstained is True

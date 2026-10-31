@@ -21,6 +21,7 @@ graham:
 # `min_history_years` fiscal years it abstains rather than scoring zero.
 buffett:
   impl: deterministic
+  skip_sectors: [Financials]       # debt, capex and margin criteria do not fit banks/insurers
   window_years: 10
   min_history_years: 5
   min_roe: 0.15                    # return on equity floor...
@@ -34,12 +35,15 @@ buffett:
   owner_earnings_years: 3          # owner earnings = net income + D&A - capex, averaged
   discount_rate: 0.10              # intrinsic value = owner earnings * (1+growth) / (rate - growth)
   growth: 0.0
-  min_margin_of_safety: 0.25
+  min_margin_of_safety: 0.25       # strict: with 0% growth at a 10% rate this needs market cap <= 7.5x
+                                   # owner earnings, and total (not maintenance) capex is deducted;
+                                   # first on the calibration list
 
 # Lynch: categorise by EPS growth, then judge price against growth. Cyclicals and turnarounds
 # abstain (a growth-adjusted P/E is meaningless for them); asset plays are not modelled.
 lynch:
   impl: deterministic
+  skip_sectors: [Financials]       # debt criteria do not fit banks/insurers
   window_years: 10
   min_history_years: 5
   fast_growth: 0.20                # EPS growth/yr at or above this = fast grower
@@ -83,7 +87,8 @@ guardrails:
   skip_sectors: [Financials]       # balance-sheet ratios mean something else for banks/insurers
   piotroski:
     min_evaluable_signals: 7       # of 9; signals without data are not counted
-    veto_at_or_below: 2            # F-score at or below this caps conviction
+    veto_share_at_or_below: 0.25   # passes / evaluable signals at or below this caps conviction
   altman:                          # Z'' for non-manufacturers
     distress_below: 1.1
     safe_above: 2.6
+    require_corroboration: true    # distress vetoes only if not profitable and cash-generative

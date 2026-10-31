@@ -430,7 +430,7 @@ def test_repaid_debt_is_zero_not_a_stale_old_value(raw_engine):
     )
     m = metrics(raw_engine, ticker="REPAID")
     assert m.debt_to_equity == 0.0  # previously 400 / 1000 = 0.4, mixing years
-    assert any("no long-term debt reported for fiscal year 2024" in w for w in m.warnings)
+    assert any("no debt reported for fiscal year 2024" in w for w in m.warnings)
 
 
 def test_missing_debt_without_a_balance_sheet_stays_unknown(raw_engine):
@@ -538,3 +538,78 @@ def test_every_mapped_concept_is_classified_so_annual_series_cannot_drop_one_sil
     classified = STOCK_CONCEPTS | FLOW_CONCEPTS | SNAPSHOT_CONCEPTS
     assert set(CONCEPT_TAGS) == classified  # none unclassified, none classified but unmapped
     assert not (STOCK_CONCEPTS & FLOW_CONCEPTS)
+
+
+# --- PR #13 review: one definition of debt, one source of share counts ----------------------
+
+DEBT_NONCURRENT = CONCEPT_TAGS["LongTermDebt"][0]  # excludes the portion due within a year
+DEBT_TOTAL = CONCEPT_TAGS["LongTermDebt"][1]  # already includes it
+SHARES_COVER, SHARES_BALANCE = CONCEPT_TAGS["SharesOutstanding"][:2]
+
+
+class _Row:
+    def __init__(self, row):
+        self.__dict__.update(row)
+
+
+def derived(concept, *rows):
+    return annual_series([_Row(r) for r in rows]).get(concept)
+
+
+def debt_fact(value, end, tag, concept="LongTermDebt"):
+    return fact(concept, value, end, tag=tag, instant=True)
+
+
+def test_total_debt_adds_the_current_portion_to_the_noncurrent_tag():
+    rows = (
+        debt_fact(400, FY24, DEBT_NONCURRENT),
+        debt_fact(100, FY24, None, "LongTermDebtCurrent"),
+    )
+    assert derived("TotalDebt", *rows) == [(FY24, 500.0)]
+
+
+def test_total_debt_does_not_double_count_when_the_total_tag_already_includes_it():
+    rows = (debt_fact(500, FY24, DEBT_TOTAL), debt_fact(100, FY24, None, "LongTermDebtCurrent"))
+    assert derived("TotalDebt", *rows) == [(FY24, 500.0)]  # not 600
+
+
+def test_total_debt_per_year_follows_the_tag_in_use_that_year():
+    rows = (
+        debt_fact(450, FY23, DEBT_TOTAL),
+        debt_fact(50, FY23, None, "LongTermDebtCurrent"),
+        debt_fact(400, FY24, DEBT_NONCURRENT),
+        debt_fact(100, FY24, None, "LongTermDebtCurrent"),
+    )
+    assert derived("TotalDebt", *rows) == [(FY23, 450.0), (FY24, 500.0)]
+
+
+def test_total_debt_edge_cases():
+    only_noncurrent = (debt_fact(400, FY24, DEBT_NONCURRENT),)
+    assert derived("TotalDebt", *only_noncurrent) == [(FY24, 400.0)]
+    only_current = (debt_fact(100, FY24, None, "LongTermDebtCurrent"),)
+    assert derived("TotalDebt", *only_current) == [(FY24, 100.0)]
+    assert derived("TotalDebt") is None
+
+
+def test_debt_to_equity_uses_total_debt_without_double_counting(raw_engine):
+    for ticker, tag, expected in (("DTOT", DEBT_TOTAL, 0.5), ("DNON", DEBT_NONCURRENT, 0.6)):
+        add_company(raw_engine, ticker, [
+            fact("StockholdersEquity", 1000, FY24, instant=True),
+            fact("Assets", 2000, FY24, instant=True),
+            debt_fact(500, FY24, tag),
+            debt_fact(100, FY24, None, "LongTermDebtCurrent"),
+        ])  # fmt: skip
+        assert metrics(raw_engine, ticker=ticker).debt_to_equity == pytest.approx(expected)
+
+
+def test_share_counts_come_from_one_source_not_a_mix_of_cover_and_balance_sheet():
+    rows = (
+        fact("SharesOutstanding", 95, FY23, tag=SHARES_BALANCE, unit="shares", instant=True),
+        fact("SharesOutstanding", 98, FY24, tag=SHARES_BALANCE, unit="shares", instant=True),
+        fact("SharesOutstanding", 100, COVER24, tag=SHARES_COVER, unit="shares", instant=True),
+    )
+    # the cover page has data (for one year only): balance-sheet counts are dropped, so a
+    # year-over-year change is never computed across two different kinds of count
+    assert derived("SharesOutstanding", *rows) == [(COVER24, 100.0)]
+    only_balance = rows[:2]
+    assert derived("SharesOutstanding", *only_balance) == [(FY23, 95.0), (FY24, 98.0)]

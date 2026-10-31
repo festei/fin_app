@@ -47,7 +47,7 @@ def quality(**overrides) -> SecurityMetrics:
         "OperatingIncome": points([250] * 10),
         "DepreciationAmortization": points([30] * 10),
         "Capex": points([40] * 10),
-        "LongTermDebt": points({2024: 200}),
+        "TotalDebt": points({2024: 200}),
         "Assets": points({2024: 2000}),
         "SharesOutstanding": [AnnualPoint(period_end=date(2025, 1, 31), value=100.0)],
     }
@@ -114,7 +114,7 @@ def test_one_loss_year_is_tolerated_two_are_not():
 
 
 def test_debt_payback_years():
-    r = score_buffett(quality(annual={"LongTermDebt": points({2024: 1000})}), BUFFETT_CFG)
+    r = score_buffett(quality(annual={"TotalDebt": points({2024: 1000})}), BUFFETT_CFG)
     c = criterion(r, "Debt repayable from earnings")
     assert not c.passed and c.actual == 5.0  # 1000 / 200 > 4
 
@@ -124,11 +124,11 @@ def test_debt_payback_years():
 
 
 def test_missing_debt_is_zero_only_with_a_balance_sheet():
-    with_bs = quality(annual={"LongTermDebt": []})
+    with_bs = quality(annual={"TotalDebt": []})
     c = criterion(score_buffett(with_bs, BUFFETT_CFG), "Debt repayable from earnings")
     assert c.passed and "treated as 0" in c.detail
 
-    no_bs = quality(annual={"LongTermDebt": [], "Assets": []})
+    no_bs = quality(annual={"TotalDebt": [], "Assets": []})
     c = criterion(score_buffett(no_bs, BUFFETT_CFG), "Debt repayable from earnings")
     assert not c.passed and c.detail.startswith("no data")
 
@@ -237,7 +237,8 @@ def test_nothing_evaluated_means_no_conviction_and_no_signal():
         "config": {"weights": {}},
     }
     agg = aggregate_node(state)
-    assert agg["conviction"] == 0.0 and agg["all_abstained"] is True
+    # None, not 0.0: "no view" must not be stored as a previous conviction or read as a collapse
+    assert agg["conviction"] is None and agg["all_abstained"] is True
     assert "No philosophy could be evaluated" in agg["explanation"]
     # a 0 caused by missing data must never look like a collapse and trigger a sell
     decided = decide_node({**state, **agg, "previous_conviction": 90.0, "metrics": quality()})
@@ -318,3 +319,9 @@ def test_buffett_scores_a_company_from_stored_facts(raw_engine):
     assert buffett.evaluated and buffett.score == 100.0
     assert criterion(buffett, MOS).actual == pytest.approx(0.4231, abs=1e-4)
     assert len(out["metrics"].annual["Capex"]) == 10
+
+
+def test_banks_and_insurers_skip_buffett():
+    r = score_buffett(quality(sector="Financials"), BUFFETT_CFG)
+    assert r.evaluated is False and "Financials" in r.explanation
+    assert score_buffett(quality(sector="Technology"), BUFFETT_CFG).evaluated is True

@@ -40,7 +40,7 @@ def healthy(**overrides) -> SecurityMetrics:
         "Assets": pts(1000, 1100),
         "NetIncome": pts(50, 80),
         "NetCashFromOperating": pts(90, 120),
-        "LongTermDebt": pts(300, 250),
+        "TotalDebt": pts(300, 250),
         "AssetsCurrent": pts(400, 500),
         "LiabilitiesCurrent": pts(300, 300),
         "Revenue": pts(1000, 1210),
@@ -57,7 +57,7 @@ def healthy(**overrides) -> SecurityMetrics:
 WEAK_ANNUAL = {
     "NetIncome": pts(50, -10),
     "NetCashFromOperating": pts(90, -20),
-    "LongTermDebt": pts(300, 500),
+    "TotalDebt": pts(300, 500),
     "AssetsCurrent": pts(400, 200),
     "Revenue": pts(1000, 900),
     "GrossProfit": pts(400, 100),
@@ -90,12 +90,12 @@ def test_new_shares_and_rising_leverage_each_cost_a_point():
         annual={"SharesOutstanding": pts(100, 120, date(2024, 1, 31), date(2025, 1, 31))}
     )
     assert failed(piotroski(shares, G)[0]) == {"No new shares issued"}
-    levered = healthy(annual={"LongTermDebt": pts(300, 500)})  # .30 -> .4545
+    levered = healthy(annual={"TotalDebt": pts(300, 500)})  # .30 -> .4545
     assert failed(piotroski(levered, G)[0]) == {"Falling leverage"}
 
 
 def test_no_debt_in_either_year_counts_as_falling_leverage():
-    r, passes, _ = piotroski(healthy(annual={"LongTermDebt": []}), G)
+    r, passes, _ = piotroski(healthy(annual={"TotalDebt": []}), G)
     assert passes == 9 and "Falling leverage" not in failed(r)
 
 
@@ -170,10 +170,15 @@ def test_altman_abstains_without_all_inputs():
 # --- the node and the graph ---------------------------------------------------------------
 
 
-def test_node_vetoes_on_distress_or_a_very_weak_f_score():
-    distressed = healthy(annual=balance(1000, 100, 400, -200, -50, 100, 900))
+LOSING_MONEY = {"NetIncome": pts(50, -10), "NetCashFromOperating": pts(90, -20)}
+DISTRESSED_BALANCE = balance(1000, 100, 400, -200, -50, 100, 900)  # Z'' = -2.84
+
+
+def test_node_vetoes_on_corroborated_distress_or_a_very_weak_f_score():
+    distressed = healthy(annual={**DISTRESSED_BALANCE, **LOSING_MONEY})
     out = guardrails_node({"metrics": distressed, "config": CFG})
     assert out["guardrail_veto"] and any("distress zone" in r for r in out["guardrail_reasons"])
+    assert out["guardrail_notes"] == []
 
     weak = healthy(annual=WEAK_ANNUAL)
     out = guardrails_node({"metrics": weak, "config": CFG})
@@ -196,7 +201,12 @@ def test_financials_and_missing_data_never_veto():
 def test_guardrails_can_be_disabled():
     cfg = {**CFG, "guardrails": {**G, "enabled": False}}
     out = guardrails_node({"metrics": healthy(), "config": cfg})
-    assert out == {"guardrail_veto": False, "guardrail_results": {}, "guardrail_reasons": []}
+    assert out == {
+        "guardrail_veto": False,
+        "guardrail_results": {},
+        "guardrail_reasons": [],
+        "guardrail_notes": [],
+    }
 
 
 GRAHAM_PASSING = dict(
@@ -211,7 +221,7 @@ def run(metrics, previous=None):
 
 
 def test_distress_caps_an_otherwise_perfect_conviction_and_explains_why():
-    metrics = healthy(annual=balance(1000, 100, 400, -200, -50, 100, 900), **GRAHAM_PASSING)
+    metrics = healthy(annual={**DISTRESSED_BALANCE, **LOSING_MONEY}, **GRAHAM_PASSING)
     out = run(metrics)
     assert out["philosophy_results"]["graham"].score == 100.0
     assert out["conviction"] == 49.0  # capped just below the sell threshold
@@ -293,3 +303,89 @@ def test_guardrails_score_a_company_from_stored_facts(raw_engine):
     z = out["guardrail_results"]["altman_z"]
     assert z.evaluated and z.criteria[0].passed  # outside the distress zone
     assert out["conviction"] is not None
+
+
+# --- PR #13 review: Altman distress needs corroboration ----------------------------------------
+# A profitable company that returns cash through large buybacks has negative retained earnings
+# and equity, so Z'' looks like distress (McDonald's, Starbucks, ...). Same balance sheet as the
+# distressed case above, but healthy income and cash flow (the defaults of healthy()).
+
+
+def test_buyback_style_negative_equity_is_a_note_not_a_veto():
+    buyback = healthy(annual=DISTRESSED_BALANCE)  # NI +80, CFO +120
+    out = guardrails_node({"metrics": buyback, "config": CFG})
+    assert out["guardrail_veto"] is False and out["guardrail_reasons"] == []
+    assert len(out["guardrail_notes"]) == 1
+    assert "distress zone but not corroborated" in out["guardrail_notes"][0]
+    assert out["guardrail_notes"][0] in out["guardrail_results"]["altman_z"].evidence
+
+
+def test_buyback_company_keeps_its_conviction_and_the_note_is_in_the_explanation():
+    out = run(healthy(annual=DISTRESSED_BALANCE, **GRAHAM_PASSING))
+    assert out["conviction"] == 100.0 and "Capped" not in out["explanation"]
+    assert (
+        "Guardrail notes: Altman Z'' -2.84 is in the distress zone but not corroborated"
+        in (out["explanation"])
+    )
+    assert out["signal"].kind == "emerging"
+
+
+def test_distress_without_cash_flow_data_still_vetoes():
+    no_cash_flow = healthy(annual={**DISTRESSED_BALANCE, "NetCashFromOperating": []})
+    out = guardrails_node({"metrics": no_cash_flow, "config": CFG})
+    assert out["guardrail_veto"] is True  # health cannot be shown, so the cap stays
+
+
+def test_profit_without_cash_is_not_health():
+    paper_profit = healthy(annual={**DISTRESSED_BALANCE, "NetCashFromOperating": pts(90, -20)})
+    assert guardrails_node({"metrics": paper_profit, "config": CFG})["guardrail_veto"] is True
+
+
+def test_corroboration_can_be_switched_off():
+    cfg = {**CFG, "guardrails": {**G, "altman": {**G["altman"], "require_corroboration": False}}}
+    out = guardrails_node({"metrics": healthy(annual=DISTRESSED_BALANCE), "config": cfg})
+    assert out["guardrail_veto"] is True  # the original, uncorroborated behaviour
+
+
+def test_a_weak_f_score_vetoes_even_when_altman_distress_is_explained():
+    weak_but_profitable = healthy(
+        annual={**WEAK_ANNUAL, **DISTRESSED_BALANCE, "NetIncome": pts(50, 20),
+                "NetCashFromOperating": pts(90, 15)}
+    )  # fmt: skip
+    out = guardrails_node({"metrics": weak_but_profitable, "config": CFG})
+    assert out["guardrail_veto"] is True
+    reasons = " | ".join(out["guardrail_reasons"])
+    assert "Piotroski F-score 2 of 9" in reasons and "Altman" in reasons  # not exempted
+
+
+# --- PR #13 review: the Piotroski veto is a fraction, not an absolute count ---------------------
+
+
+def f_score_of(net_income_2024, cfo_2024):
+    metrics = healthy(
+        annual={**WEAK_ANNUAL, "NetIncome": pts(50, net_income_2024),
+                "NetCashFromOperating": pts(90, cfo_2024)}
+    )  # fmt: skip
+    return guardrails_node({"metrics": metrics, "config": CFG})
+
+
+def test_two_of_nine_vetoes_but_three_of_nine_does_not():
+    # NI 20 / CFO 15: only "ROA > 0" and "CFO > 0" pass (CFO/assets .0136 < ROA .0182) -> 2/9 = .22
+    two = f_score_of(20, 15)
+    assert two["guardrail_veto"] and "Piotroski F-score 2 of 9" in two["guardrail_reasons"][0]
+    # NI 20 / CFO 30: "cash flow exceeds earnings" passes too -> 3/9 = .33 > .25
+    three = f_score_of(20, 30)
+    assert three["guardrail_veto"] is False
+    assert three["guardrail_results"]["piotroski"].score == pytest.approx(33.3, abs=0.1)
+
+
+def test_the_veto_threshold_is_configurable_as_a_share():
+    loose = {**G["piotroski"], "veto_share_at_or_below": 0.5}
+    strict = {**CFG, "guardrails": {**G, "piotroski": loose}}
+    zero_of_nine = healthy(annual=WEAK_ANNUAL)
+    three_of_nine = healthy(
+        annual={**WEAK_ANNUAL, "NetIncome": pts(50, 20), "NetCashFromOperating": pts(90, 30)}
+    )
+    assert guardrails_node({"metrics": zero_of_nine, "config": strict})["guardrail_veto"]
+    assert guardrails_node({"metrics": three_of_nine, "config": strict})["guardrail_veto"]  # <= .5
+    assert guardrails_node({"metrics": three_of_nine, "config": CFG})["guardrail_veto"] is False

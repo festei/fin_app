@@ -68,6 +68,42 @@ def _is_annual_flow(f: FundamentalFact) -> bool:
     return ANNUAL_DAYS[0] <= days <= ANNUAL_DAYS[1]
 
 
+def _keep_one_snapshot_tag(best: dict[tuple[str, date], tuple[tuple[int, int], float]]) -> None:
+    """Share counts come from one source per company: the highest-priority tag that has any
+    data (cover page before balance sheet). Mixing them, e.g. a cover count one year and a
+    balance-sheet count the next, would make year-over-year share changes meaningless."""
+    for concept in SNAPSHOT_CONCEPTS:
+        ranks = {key: rank[0] for key, (rank, _) in best.items() if key[0] == concept}
+        if ranks:
+            keep = min(ranks.values())
+            for key, tag_rank in ranks.items():
+                if tag_rank != keep:
+                    del best[key]
+
+
+def _derive_total_debt(best: dict[tuple[str, date], tuple[tuple[int, int], float]]) -> None:
+    """Add a ``TotalDebt`` series: one definition of debt for every consumer.
+
+    The ``LongTermDebt`` concept has two tags: ``LongTermDebtNoncurrent`` (rank 0, excludes the
+    portion due within a year) and ``LongTermDebt`` (rank 1, already includes it). Adding the
+    current portion to the second would count it twice, so it is added only to the first. A year
+    with only current debt reported uses that.
+    """
+    ends = {end for (concept, end) in best if concept in ("LongTermDebt", "LongTermDebtCurrent")}
+    for end in ends:
+        long_term = best.get(("LongTermDebt", end))
+        current = best.get(("LongTermDebtCurrent", end))
+        current_value = current[1] if current else None
+        if long_term is None:
+            total = current_value
+        elif long_term[0][0] == 0:  # noncurrent tag: add what is due within a year
+            total = long_term[1] + (current_value or 0.0)
+        else:  # total tag: already includes the current portion
+            total = long_term[1]
+        if total is not None:
+            best[("TotalDebt", end)] = ((0, 0), total)
+
+
 def annual_series(facts: Iterable[FundamentalFact]) -> Series:
     """``{concept: [(fiscal_year_end, value), ...]}``, oldest first."""
     best: dict[tuple[str, date], tuple[tuple[int, int], float]] = {}
@@ -93,6 +129,8 @@ def annual_series(facts: Iterable[FundamentalFact]) -> Series:
         key = (concept, f.period_end)
         if key not in best or rank < best[key][0]:
             best[key] = (rank, float(f.value))
+    _keep_one_snapshot_tag(best)
+    _derive_total_debt(best)
     out: Series = {}
     for (concept, end), (_, value) in best.items():
         out.setdefault(concept, []).append((end, value))

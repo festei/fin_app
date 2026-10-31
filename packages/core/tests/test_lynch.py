@@ -211,3 +211,9 @@ def test_too_little_history_or_no_pe_abstains():
     assert no_pe.evaluated is False and "no P/E" in no_pe.explanation
     no_price = score_lynch(company(growing(0.25), price=None), CFG)
     assert no_price.evaluated is False
+
+
+def test_banks_and_insurers_skip_lynch():
+    r = score_lynch(company(growing(0.25), sector="Financials"), CFG)
+    assert r.evaluated is False and "Financials" in r.explanation
+    assert score_lynch(company(growing(0.25), sector="Technology"), CFG).evaluated is True

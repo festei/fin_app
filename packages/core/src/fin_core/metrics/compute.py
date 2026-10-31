@@ -179,7 +179,7 @@ def compute_metrics(session: Session, ticker: str, as_of: date | datetime) -> Se
 
     debt_to_equity = None
     if equity_fy is not None and equity:
-        debt = dict(series.get("LongTermDebt", [])).get(equity_fy)
+        debt = dict(series.get("TotalDebt", [])).get(equity_fy)
         if debt is None:
             balance_sheet_exists = any(
                 equity_fy in dict(series.get(c, []))
@@ -188,7 +188,7 @@ def compute_metrics(session: Session, ticker: str, as_of: date | datetime) -> Se
             if balance_sheet_exists:
                 debt = 0.0
                 warnings.append(
-                    f"no long-term debt reported for fiscal year {equity_fy}: treated as 0 "
+                    f"no debt reported for fiscal year {equity_fy}: treated as 0 "
                     "(it may be filed under a tag we do not map)"
                 )
         # equity < 0 stays visible as a negative ratio (the Graham node fails it)

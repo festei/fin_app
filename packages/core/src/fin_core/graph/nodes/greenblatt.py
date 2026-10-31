@@ -5,7 +5,8 @@ This node scores ONE stock against absolute thresholds (``min_earnings_yield``,
 ``min_return_on_capital``), so it works for a single ticker and without stored scores. It is a
 proxy for the ranking, not the ranking itself.
 
-* earnings yield = EBIT / enterprise value, EBIT = operating income, EV = market cap + debt - cash
+* earnings yield = EBIT / enterprise value, EBIT = operating income,
+  EV = market cap + total debt - cash (total debt already includes the portion due within a year)
 * return on capital = EBIT / (net working capital + net fixed assets), with net working capital
   = (current assets - cash) - (current liabilities - debt due within a year)
 
@@ -65,16 +66,16 @@ def score_greenblatt(m: SecurityMetrics, cfg: dict[str, Any]) -> ScoreResult:
         return None
 
     cash = stock("Cash", "cash")
-    debt_lt = stock("LongTermDebt", "long-term debt")
-    debt_cur = stock("LongTermDebtCurrent", "current debt")
+    debt = stock("TotalDebt", "debt")  # already includes the portion due within a year
+    debt_cur = stock("LongTermDebtCurrent", "current debt")  # only to adjust working capital
 
     # --- earnings yield -------------------------------------------------------------------
     ey_name, roc_name = "Earnings yield", "Return on capital"
     market_cap = m.price * shares[-1].value
-    if cash is None or debt_lt is None or debt_cur is None:
+    if cash is None or debt is None:
         ey = _no_data(ey_name, cfg["min_earnings_yield"], f"no balance sheet for {fy}")
     else:
-        ev = market_cap + debt_lt + debt_cur - cash
+        ev = market_cap + debt - cash
         if ev <= 0:
             ey = Criterion(
                 name=ey_name,

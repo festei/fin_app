@@ -42,8 +42,9 @@ def aggregate_node(state: dict[str, Any]) -> dict[str, Any]:
     note = f" Not evaluated (insufficient data): {', '.join(abstained)}." if abstained else ""
     total = sum(weights.get(name, 1.0) for name in results)
     if not results or total <= 0:
+        # None, not 0.0: "no view" must not be stored as previous_conviction or read as a collapse
         return {
-            "conviction": 0.0,
+            "conviction": None,
             "all_abstained": True,
             "explanation": f"No philosophy could be evaluated.{note}",
         }
@@ -52,6 +53,9 @@ def aggregate_node(state: dict[str, Any]) -> dict[str, Any]:
     if state.get("guardrail_veto"):
         conviction = min(conviction, SELL_THRESHOLD - 1)
         capped = f" Capped by guardrails: {'; '.join(state.get('guardrail_reasons', []))}."
+    notes = state.get("guardrail_notes", [])
+    if notes:
+        capped += f" Guardrail notes: {'; '.join(notes)}."
     parts = ", ".join(f"{n} {r.score:.0f}" for n, r in sorted(results.items()))
     return {
         "conviction": round(conviction, 1),
