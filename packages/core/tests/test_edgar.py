@@ -162,3 +162,23 @@ def test_conflicting_values_for_the_same_key_are_dropped_not_overwritten():
     assert "us-gaap/EarningsPerShareDiluted" not in tags  # ambiguous: dropped entirely
     assert tags.count("us-gaap/Revenues") == 1
     assert tags.count("us-gaap/NetIncomeLoss") == 2  # different accessions are not a conflict
+
+
+@pytest.mark.parametrize(
+    "tag, concept, instant",
+    [
+        ("ResearchAndDevelopmentExpense", "ResearchAndDevelopmentExpense", False),
+        ("InventoryNet", "InventoryNet", True),
+        ("PropertyPlantAndEquipmentNet", "PropertyPlantAndEquipmentNet", True),
+        ("LongTermDebtCurrent", "LongTermDebtCurrent", True),
+    ],
+)
+def test_concepts_added_for_lynch_greenblatt_and_fisher_are_mapped(tag, concept, instant):
+    entry = {"end": "2024-12-31", "val": 7, "accn": "0001-25-000001", "fy": 2024, "fp": "FY",
+             "form": "10-K", "filed": "2025-02-15"}  # fmt: skip
+    if not instant:
+        entry["start"] = "2024-01-01"
+    rows = normalize_facts({"facts": {"us-gaap": {tag: {"units": {"USD": [entry]}}}}})
+    assert len(rows) == 1
+    assert rows[0]["concept"] == concept and rows[0]["instant"] is instant
+    assert rows[0]["tag"] == f"us-gaap/{tag}"

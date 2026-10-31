@@ -202,14 +202,22 @@ def run(metrics, previous=None):
     )
 
 
+# These two tests are about Graham + Buffett only; the other philosophies get zero weight.
+PAIR = {**CFG, "weights": {"graham": 1.0, "buffett": 1.0, "lynch": 0, "greenblatt": 0, "fisher": 0}}
+
+
+def run_pair(metrics):
+    return build_graph().invoke({"metrics": metrics, "config": PAIR, "previous_conviction": None})
+
+
 def test_graph_combines_graham_and_buffett():
-    out = run(quality(**GRAHAM_PASSING))
-    assert set(out["philosophy_results"]) == {"graham", "buffett"}
+    out = run_pair(quality(**GRAHAM_PASSING))
+    assert {"graham", "buffett"} <= set(out["philosophy_results"])
     assert out["conviction"] == 100.0 and out["signal"].kind == "emerging"
 
 
 def test_graph_equal_weights_average_the_two_philosophies():
-    out = run(quality(price=15.0, **GRAHAM_PASSING))  # buffett 85.7, graham 100
+    out = run_pair(quality(price=15.0, **GRAHAM_PASSING))  # buffett 85.7, graham 100
     assert out["conviction"] == pytest.approx((100 + 100 * 6 / 7) / 2, abs=0.1)
 
 

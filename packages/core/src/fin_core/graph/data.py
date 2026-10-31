@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from statistics import mean
 
 from fin_core.models import SecurityMetrics
 
@@ -39,3 +40,27 @@ def shares_for_year(m: SecurityMetrics, fy: date) -> float | None:
         if fy <= p.period_end <= fy + SHARES_PAIR_WINDOW
     ]
     return near[0] if near else None
+
+
+def cagr(
+    points: list[tuple[date, float]], window_years: int = 10, min_points: int = 5
+) -> float | None:
+    """Smoothed annual growth rate of a fiscal-year series (oldest first).
+
+    Compares the mean of the first 3 and the last 3 values within about ``window_years``
+    calendar years, annualised over the distance between the two groups' middle years, so one
+    odd year does not decide the result. With only 5 points the two groups share a year.
+    ``None`` with fewer than ``min_points`` points or a non-positive start or end average.
+    """
+    pts = sorted(points)
+    if not pts:
+        return None
+    pts = [p for p in pts if (pts[-1][0] - p[0]).days <= window_years * 360]
+    if len(pts) < min_points:
+        return None
+    first, last = pts[:3], pts[-3:]
+    start, end = mean(v for _, v in first), mean(v for _, v in last)
+    years = (last[1][0] - first[1][0]).days / 365.25
+    if start <= 0 or end <= 0 or years <= 0:
+        return None
+    return (end / start) ** (1 / years) - 1

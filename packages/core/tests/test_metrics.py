@@ -342,7 +342,17 @@ def test_score_security_runs_the_graph_on_database_metrics(db):
     # pb 2.5 > 1.5, pe x pb 25 > 22.5, only 6 dividend years < 10
     assert graham.score == pytest.approx(100 * 4 / 7, abs=0.1)
     assert out["metrics"].warnings == []
-    assert out["signal"] is None  # 57 is below the buy threshold
+    # ACME has 12 years of EPS, so Lynch evaluates it too: smoothed EPS growth is
+    # (2.2333 / 1.3) ** (1 / 7) - 1 = 8.0% a year -> slow grower, judged on yield 4% (>= 3%),
+    # P/E 10 (<= 15) and debt/equity 0.4 (<= 0.8): all pass. The multi-year income and
+    # balance-sheet philosophies lack data here and abstain.
+    lynch = out["philosophy_results"]["lynch"]
+    assert lynch.evaluated and lynch.score == 100.0
+    assert "slow grower, EPS growth 8.0%/yr" in lynch.evidence[0]
+    abstained = {n for n, r in out["philosophy_results"].items() if not r.evaluated}
+    assert abstained == {"buffett", "greenblatt", "fisher"}
+    assert out["conviction"] == pytest.approx((100 * 4 / 7 + 100) / 2, abs=0.1)  # graham + lynch
+    assert out["signal"].kind == "emerging"  # 78.6 clears the buy threshold
 
 
 # --- PR #12 review: ratios must be internally consistent ------------------------------------
@@ -520,3 +530,11 @@ def test_missing_or_stale_data_are_signal_blockers_other_warnings_are_not(db):
     assert any(b.startswith("price is stale") for b in stale.signal_blockers)
     assert any(b.startswith("fundamentals are stale") for b in stale.signal_blockers)
     assert metrics(db).signal_blockers == []
+
+
+def test_every_mapped_concept_is_classified_so_annual_series_cannot_drop_one_silently():
+    from fin_core.metrics.annual import FLOW_CONCEPTS, SNAPSHOT_CONCEPTS, STOCK_CONCEPTS
+
+    classified = STOCK_CONCEPTS | FLOW_CONCEPTS | SNAPSHOT_CONCEPTS
+    assert set(CONCEPT_TAGS) == classified  # none unclassified, none classified but unmapped
+    assert not (STOCK_CONCEPTS & FLOW_CONCEPTS)

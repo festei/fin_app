@@ -3,6 +3,9 @@
 weights:
   graham: 1.0
   buffett: 1.0
+  lynch: 1.0
+  greenblatt: 1.0
+  fisher: 1.0
 
 graham:
   impl: deterministic
@@ -32,6 +35,46 @@ buffett:
   discount_rate: 0.10              # intrinsic value = owner earnings * (1+growth) / (rate - growth)
   growth: 0.0
   min_margin_of_safety: 0.25
+
+# Lynch: categorise by EPS growth, then judge price against growth. Cyclicals and turnarounds
+# abstain (a growth-adjusted P/E is meaningless for them); asset plays are not modelled.
+lynch:
+  impl: deterministic
+  window_years: 10
+  min_history_years: 5
+  fast_growth: 0.20                # EPS growth/yr at or above this = fast grower
+  stalwart_growth: 0.10            # between this and fast_growth = stalwart, below = slow grower
+  max_peg_fast: 1.0                # P/E / (growth% + dividend yield%)
+  max_peg_stalwart: 1.2
+  max_pe_stalwart: 25.0
+  min_yield_slow: 0.03             # slow growers are bought for income
+  max_pe_slow: 15.0
+  max_debt_to_equity: 0.8
+  min_rising_eps_share: 0.7        # share of year-over-year EPS increases (fast/stalwart)
+  max_inventory_excess: 0.10       # inventory may outgrow sales by at most 10 points
+  cyclical_drop: 0.20              # an EPS fall of this size counts as a cyclical drop...
+  cyclical_min_drops: 2            # ...and this many of them make the company cyclical
+
+# Greenblatt "magic formula" with ABSOLUTE thresholds per stock (the original ranks stocks against
+# each other; a true cross-sectional rank needs stored scores for the whole universe).
+greenblatt:
+  impl: deterministic
+  skip_sectors: [Financials, Utilities]   # excluded in the original formula
+  min_earnings_yield: 0.10         # EBIT / enterprise value
+  min_return_on_capital: 0.25      # EBIT / (net working capital + net fixed assets)
+  profit_years: 3                  # EBIT must be positive in each of the last N years
+
+# Fisher: the quantifiable subset of his 15 points (growth, margins, R&D, dilution). The
+# qualitative points (management, labor relations, ...) are left to a future LLM-based node.
+fisher:
+  impl: deterministic
+  window_years: 10
+  min_history_years: 5
+  min_revenue_growth: 0.10         # per year
+  min_profit_growth: 0.10          # per year
+  min_rd_to_revenue: 0.03          # fails as "no data" when no R&D expense is reported
+  min_operating_margin: 0.10
+  max_annual_dilution: 0.02        # share-count growth per year
 
 # Guardrails cap the conviction (they do not add to it) for weak or distressed companies.
 # They abstain for the skipped sectors and when there is too little data.

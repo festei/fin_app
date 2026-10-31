@@ -41,6 +41,10 @@ CONCEPT_TAGS: dict[str, tuple[str, ...]] = {
         "us-gaap/DepreciationDepletionAndAmortization",
         "us-gaap/DepreciationAndAmortization",
     ),
+    "ResearchAndDevelopmentExpense": ("us-gaap/ResearchAndDevelopmentExpense",),
+    "InventoryNet": ("us-gaap/InventoryNet",),
+    "PropertyPlantAndEquipmentNet": ("us-gaap/PropertyPlantAndEquipmentNet",),
+    "LongTermDebtCurrent": ("us-gaap/LongTermDebtCurrent",),
     "SharesOutstanding": (
         "dei/EntityCommonStockSharesOutstanding",
         "us-gaap/CommonStockSharesOutstanding",

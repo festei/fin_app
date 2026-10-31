@@ -30,6 +30,9 @@ STOCK_CONCEPTS = frozenset(
         "LongTermDebt",
         "Cash",
         "RetainedEarnings",
+        "InventoryNet",
+        "PropertyPlantAndEquipmentNet",
+        "LongTermDebtCurrent",
     }
 )
 FLOW_CONCEPTS = frozenset(
@@ -44,6 +47,7 @@ FLOW_CONCEPTS = frozenset(
         "NetCashFromOperating",
         "Capex",
         "DepreciationAmortization",
+        "ResearchAndDevelopmentExpense",
     }
 )
 SNAPSHOT_CONCEPTS = frozenset({"SharesOutstanding"})
