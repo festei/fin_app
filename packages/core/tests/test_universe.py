@@ -2,7 +2,7 @@ import pytest
 
 from fin_core.db import migrate, repo
 from fin_core.db.session import make_engine, session_scope
-from fin_core.universe import load_universe, sync_universe
+from fin_core.universe import load_bond_series, load_universe, sync_universe
 
 
 def test_default_universe_is_valid_and_has_stocks_and_bond_etfs():
@@ -37,3 +37,20 @@ def test_invalid_universe_rejected(tmp_path, yaml_text, msg):
     p.write_text(yaml_text)
     with pytest.raises(ValueError, match=msg):
         load_universe(p)
+
+
+def test_bond_series_config_is_valid():
+    series = load_bond_series()
+    ids = {x["id"] for x in series}
+    assert {"DGS2", "DGS10", "T10Y2Y", "BAMLC0A0CM", "BAMLH0A0HYM2"} <= ids
+    assert {x["kind"] for x in series} == {"yield", "spread"}
+
+
+def test_bond_series_rejects_bad_config(tmp_path):
+    p = tmp_path / "b.yml"
+    p.write_text("series:\n  - {id: A, kind: yield}\n  - {id: A, kind: yield}\n")
+    with pytest.raises(ValueError, match="duplicate"):
+        load_bond_series(p)
+    p.write_text("series:\n  - {id: A, kind: price}\n")
+    with pytest.raises(ValueError, match="kind must be"):
+        load_bond_series(p)

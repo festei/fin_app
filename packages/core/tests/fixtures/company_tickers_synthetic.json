@@ -1,0 +1,20 @@
+{
+ "0": {
+  "cik_str": 1000001,
+  "ticker": "TEST",
+  "title": "Test Corp"
+ },
+ "1": {
+  "cik_str": 1000002,
+  "ticker": "brk-b",
+  "title": "Berkshire-like Class B"
+ },
+ "2": {
+  "cik_str": "oops",
+  "ticker": "BAD",
+  "title": "Malformed row"
+ },
+ "3": {
+  "ticker": "NOCIK"
+ }
+}

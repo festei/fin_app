@@ -39,6 +39,20 @@ def load_universe(path: Path | None = None) -> list[dict[str, Any]]:
     return rows
 
 
+def load_bond_series(path: Path | None = None) -> list[dict[str, Any]]:
+    """FRED series tracked for bonds, from ``config/bond_series.yml``."""
+    if path is None:
+        path = _default_path().with_name("bond_series.yml")
+    series = (yaml.safe_load(path.read_text()) or {}).get("series") or []
+    ids = [str(x["id"]) for x in series]
+    if len(set(ids)) != len(ids):
+        raise ValueError("duplicate series id in bond_series.yml")
+    for x in series:
+        if x.get("kind") not in {"yield", "spread"}:
+            raise ValueError(f"{x.get('id')}: kind must be 'yield' or 'spread'")
+    return series
+
+
 def sync_universe(session: Session, path: Path | None = None) -> int:
     """Upsert the configured universe. Does not deactivate tickers removed from the file."""
     return repo.upsert_securities(session, load_universe(path))

@@ -46,6 +46,22 @@ Without `TEST_DATABASE_URL` the DB tests run on SQLite only; with it they also r
 Fundamentals are stored with their filing date, and `repo.facts_as_of` only returns what was public
 at the given date (no look-ahead).
 
+## Data ingestion (slow cadence)
+
+* `fin_core.providers.edgar`: SEC EDGAR ticker→CIK map and XBRL company facts (needs `SEC_USER_AGENT`).
+* `fin_core.providers.fred`: Treasury yields, curve spread and credit spreads (needs `FRED_API_KEY`).
+* `fin_core.ingest`: per-ticker/series isolation, idempotent upserts, one `ingestion_runs` row per job.
+* `flows/fin_flows/ingestion.py`: Prefect flows (`python -m fin_flows.ingestion` serves the schedules).
+* Config: `config/universe.yml`, `config/bond_series.yml`.
+
+**Status:** both providers were written from the public API documentation and tested only against
+synthetic fixtures with the documented response shape (`packages/core/tests/fixtures`). They have not
+been run against the live SEC/FRED APIs yet. Verify where those hosts are reachable:
+
+```sh
+RUN_LIVE_TESTS=1 SEC_USER_AGENT="Your Name you@example.com" FRED_API_KEY=... uv run pytest -m live -v
+```
+
 ## Feature flags
 
 `config/features.yml` holds defaults; env `FEATURE_<NAME>` overrides. `telegram_enabled` is off by

@@ -1,0 +1,9 @@
+# FRED series tracked for the bond workspace and bond scorers. Values are percent.
+series:
+  - { id: DGS3MO, name: 3-Month Treasury yield, kind: yield }
+  - { id: DGS2, name: 2-Year Treasury yield, kind: yield }
+  - { id: DGS10, name: 10-Year Treasury yield, kind: yield }
+  - { id: DGS30, name: 30-Year Treasury yield, kind: yield }
+  - { id: T10Y2Y, name: 10Y minus 2Y Treasury spread, kind: spread }
+  - { id: BAMLC0A0CM, name: ICE BofA US Corporate (IG) option-adjusted spread, kind: spread }
+  - { id: BAMLH0A0HYM2, name: ICE BofA US High Yield option-adjusted spread, kind: spread }
