@@ -32,3 +32,15 @@ buffett:
   discount_rate: 0.10              # intrinsic value = owner earnings * (1+growth) / (rate - growth)
   growth: 0.0
   min_margin_of_safety: 0.25
+
+# Guardrails cap the conviction (they do not add to it) for weak or distressed companies.
+# They abstain for the skipped sectors and when there is too little data.
+guardrails:
+  enabled: true
+  skip_sectors: [Financials]       # balance-sheet ratios mean something else for banks/insurers
+  piotroski:
+    min_evaluable_signals: 7       # of 9; signals without data are not counted
+    veto_at_or_below: 2            # F-score at or below this caps conviction
+  altman:                          # Z'' for non-manufacturers
+    distress_below: 1.1
+    safe_above: 2.6

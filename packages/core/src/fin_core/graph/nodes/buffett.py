@@ -20,25 +20,14 @@ at least $1 of market value per $1 retained" needs market-value history and is n
 
 from __future__ import annotations
 
-from datetime import date
 from statistics import mean
 from typing import Any
 
+from fin_core.graph.data import recent_years as _recent
+from fin_core.graph.data import series_by_year as _series
 from fin_core.models import Criterion, ScoreResult, SecurityMetrics
 
 NAME = "buffett"
-
-
-def _series(m: SecurityMetrics, concept: str) -> dict[date, float]:
-    return {p.period_end: p.value for p in m.annual.get(concept, [])}
-
-
-def _recent(years: list[date], window_years: int) -> list[date]:
-    """The fiscal years within about ``window_years`` calendar years of the newest one."""
-    if not years:
-        return []
-    years = sorted(years)
-    return [y for y in years if (years[-1] - y).days <= window_years * 360]
 
 
 def _no_data(name: str, threshold: float | None, why: str) -> Criterion:

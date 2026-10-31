@@ -12,6 +12,7 @@ from typing import Any
 import yaml
 from langgraph.graph import END, START, StateGraph
 
+from fin_core.graph.guardrails import guardrails_node
 from fin_core.graph.nodes import PHILOSOPHY_NODES
 from fin_core.graph.state import GraphState
 from fin_core.models import SecurityMetrics, Signal
@@ -31,11 +32,6 @@ def load_config(path: Path | None = None) -> dict[str, Any]:
     return yaml.safe_load(path.read_text())
 
 
-def guardrails_node(state: dict[str, Any]) -> dict[str, Any]:
-    # Phase 2 adds Piotroski / Altman / Beneish. For now nothing is vetoed.
-    return {"guardrail_veto": False}
-
-
 def aggregate_node(state: dict[str, Any]) -> dict[str, Any]:
     """Weighted mean of the philosophies that could be evaluated. Abstentions (too little data)
     are excluded from the weighting rather than counted as zero, and are named in the text."""
@@ -52,13 +48,15 @@ def aggregate_node(state: dict[str, Any]) -> dict[str, Any]:
             "explanation": f"No philosophy could be evaluated.{note}",
         }
     conviction = sum(r.score * weights.get(n, 1.0) for n, r in results.items()) / total
+    capped = ""
     if state.get("guardrail_veto"):
         conviction = min(conviction, SELL_THRESHOLD - 1)
+        capped = f" Capped by guardrails: {'; '.join(state.get('guardrail_reasons', []))}."
     parts = ", ".join(f"{n} {r.score:.0f}" for n, r in sorted(results.items()))
     return {
         "conviction": round(conviction, 1),
         "all_abstained": False,
-        "explanation": f"Conviction from: {parts}.{note}",
+        "explanation": f"Conviction from: {parts}.{note}{capped}",
     }
 
 

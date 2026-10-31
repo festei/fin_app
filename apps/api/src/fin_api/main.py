@@ -6,7 +6,7 @@ from datetime import UTC, date, datetime
 from functools import lru_cache
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -47,6 +47,7 @@ class ScoreResponse(BaseModel):
     conviction: float
     explanation: str
     philosophy_results: dict[str, ScoreResult]
+    guardrail_results: dict[str, ScoreResult] = Field(default_factory=dict)
     signal: Signal | None
 
 
@@ -116,6 +117,7 @@ def score(req: ScoreRequest) -> ScoreResponse:
         conviction=out["conviction"],
         explanation=out["explanation"],
         philosophy_results=out["philosophy_results"],
+        guardrail_results=out.get("guardrail_results", {}),
         signal=out.get("signal"),
     )
 
@@ -156,6 +158,7 @@ def score_ticker(
         conviction=out["conviction"],
         explanation=out["explanation"],
         philosophy_results=out["philosophy_results"],
+        guardrail_results=out.get("guardrail_results", {}),
         signal=out.get("signal"),
         metrics=out["metrics"],
     )
