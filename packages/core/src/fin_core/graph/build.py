@@ -1,0 +1,87 @@
+"""Builds the LangGraph scoring graph.
+
+START -> [philosophy nodes in parallel] -> guardrails -> aggregate -> decide -> END
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+import yaml
+from langgraph.graph import END, START, StateGraph
+
+from fin_core.graph.nodes import PHILOSOPHY_NODES
+from fin_core.graph.state import GraphState
+from fin_core.models import SecurityMetrics, Signal
+
+BUY_THRESHOLD = 70.0
+SELL_THRESHOLD = 50.0
+
+
+def load_config(path: Path | None = None) -> dict[str, Any]:
+    if path is None:
+        for parent in Path(__file__).resolve().parents:
+            if (parent / "config" / "philosophies.yml").exists():
+                path = parent / "config" / "philosophies.yml"
+                break
+    if path is None:
+        raise FileNotFoundError("config/philosophies.yml not found")
+    return yaml.safe_load(path.read_text())
+
+
+def guardrails_node(state: dict[str, Any]) -> dict[str, Any]:
+    # Phase 2 adds Piotroski / Altman / Beneish. For now nothing is vetoed.
+    return {"guardrail_veto": False}
+
+
+def aggregate_node(state: dict[str, Any]) -> dict[str, Any]:
+    results = state["philosophy_results"]
+    weights = state["config"].get("weights", {})
+    total = sum(weights.get(name, 1.0) for name in results) or 1.0
+    conviction = sum(r.score * weights.get(n, 1.0) for n, r in results.items()) / total
+    if state.get("guardrail_veto"):
+        conviction = min(conviction, SELL_THRESHOLD - 1)
+    parts = ", ".join(f"{n} {r.score:.0f}" for n, r in sorted(results.items()))
+    return {"conviction": round(conviction, 1), "explanation": f"Conviction from: {parts}."}
+
+
+def decide_node(state: dict[str, Any]) -> dict[str, Any]:
+    """Emit a signal only on a transition across a threshold, never on every run."""
+    now: float = state["conviction"]
+    prev: float | None = state.get("previous_conviction")
+    m: SecurityMetrics = state["metrics"]
+    kind = None
+    if now >= BUY_THRESHOLD and (prev is None or prev < BUY_THRESHOLD):
+        kind = "emerging" if prev is None else "buy"
+    elif prev is not None and prev >= SELL_THRESHOLD and now < SELL_THRESHOLD:
+        kind = "sell"
+    signal = (
+        Signal(
+            ticker=m.ticker,
+            kind=kind,
+            conviction=now,
+            as_of=m.as_of if isinstance(m.as_of, datetime) else datetime.now(),
+            reason=state.get("explanation", ""),
+        )
+        if kind
+        else None
+    )
+    return {"signal": signal}
+
+
+def build_graph():
+    g = StateGraph(GraphState)
+    for name, fn in PHILOSOPHY_NODES.items():
+        g.add_node(name, fn)
+        g.add_edge(START, name)
+    g.add_node("guardrails", guardrails_node)
+    g.add_node("aggregate", aggregate_node)
+    g.add_node("decide", decide_node)
+    # Join: guardrails waits for every philosophy node.
+    g.add_edge(list(PHILOSOPHY_NODES), "guardrails")
+    g.add_edge("guardrails", "aggregate")
+    g.add_edge("aggregate", "decide")
+    g.add_edge("decide", END)
+    return g.compile()

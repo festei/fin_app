@@ -1,0 +1,70 @@
+# Production-shaped TEMPLATE. Not deployed anywhere by this repo.
+# Validate with:  TAG=x POSTGRES_PASSWORD=x docker compose -f deploy/docker-compose.prod.yml config
+# Images are pulled by tag (build and push them yourself or via CI); `web` (nginx) is the only
+# published service and also reverse-proxies /api to the api service.
+name: fin-app
+x-common: &common
+  restart: always
+  env_file: [{ path: ../.env, required: false }]
+  logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+
+services:
+  db:
+    image: timescale/timescaledb:2.17.2-pg16
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-fin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-fin}
+    volumes: [dbdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fin}"]
+      interval: 10s
+      retries: 10
+    deploy: { resources: { limits: { memory: 1g } } }
+
+  prefect:
+    image: prefecthq/prefect:3.7.7-python3.12
+    restart: always
+    command: prefect server start --host 0.0.0.0
+    volumes: [prefectdata:/root/.prefect]
+    deploy: { resources: { limits: { memory: 512m } } }
+
+  api:
+    <<: *common
+    image: fin-api:${TAG:?set TAG}
+    command: uvicorn fin_api.main:app --host 0.0.0.0 --port 8000
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/readyz')"]
+      interval: 15s
+      retries: 5
+    depends_on: { db: { condition: service_healthy } }
+    deploy: { resources: { limits: { memory: 512m } } }
+
+  worker:
+    <<: *common
+    image: fin-api:${TAG:?set TAG}
+    command: python -m fin_api.worker
+    stop_grace_period: 30s
+    depends_on: { db: { condition: service_healthy } }
+    deploy: { replicas: 1, resources: { limits: { memory: 512m } } }
+
+  flows:
+    <<: *common
+    image: fin-flows:${TAG:?set TAG}
+    command: python -m fin_flows.scoring
+    environment:
+      PREFECT_API_URL: http://prefect:4200/api
+    depends_on: [prefect, db]
+    deploy: { resources: { limits: { memory: 1g } } }
+
+  web:
+    image: fin-web:${TAG:?set TAG}
+    restart: always
+    ports: ["80:8080"]
+    depends_on: { api: { condition: service_healthy } }
+    deploy: { resources: { limits: { memory: 128m } } }
+
+volumes:
+  dbdata:
+  prefectdata:
