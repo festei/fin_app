@@ -284,3 +284,46 @@ def test_poll_once_answers_commands_and_returns_the_next_offset(bot_env):
     fake.updates = []
     assert bot.poll_once(13, timeout=1) == 13
     assert fake.calls[-1][2]["offset"] == 13  # acknowledges what it has already handled
+
+
+def test_the_offset_is_persisted_per_update_before_its_command_runs(bot_env, monkeypatch):
+    bot, fake, engine = bot_env
+    assert bot.load_offset() is None
+    seen = []
+
+    def spy(update):
+        seen.append(bot.load_offset())  # what a crash inside the command would leave behind
+        return "ok"
+
+    monkeypatch.setattr(bot, "handle_update", spy)
+    fake.updates = [
+        {"update_id": 10, "message": {"chat": {"id": 42}, "text": "/watch AAA"}},
+        {"update_id": 11, "message": {"chat": {"id": 42}, "text": "/watch BBB"}},
+    ]
+    assert bot.poll_once(None, timeout=1) == 12
+    assert seen == [11, 12]  # already acknowledged when each command started
+    assert bot.load_offset() == 12
+
+
+def test_a_failing_reply_never_replays_a_command(bot_env, monkeypatch):
+    bot, fake, engine = bot_env
+    fake.updates = [{"update_id": 5, "message": {"chat": {"id": 42}, "text": "/watch AAA"}}]
+
+    def broken(text):
+        raise ChannelError("telegram is down")
+
+    monkeypatch.setattr(bot.client, "send_message", broken)
+    assert bot.poll_once(None, timeout=1) == 6  # no exception escapes
+    assert bot.load_offset() == 6
+    with session_scope(engine) as s:
+        assert signals_repo.watchlist_tickers(s) == ["AAA"]  # the command ran exactly once
+    # a restart resumes from the stored offset instead of asking for the update again
+    fake.updates = []
+    bot.poll_once(bot.load_offset(), timeout=1)
+    assert fake.calls[-1][2]["offset"] == 6
+
+
+def test_updates_without_an_id_are_skipped(bot_env):
+    bot, fake, _ = bot_env
+    fake.updates = [{"message": {"chat": {"id": 42}, "text": "/watch AAA"}}]
+    assert bot.poll_once(7, timeout=1) == 7 and fake.sent_texts() == []

@@ -16,6 +16,7 @@ async def test_worker_stops_cleanly_on_event():
 import os  # noqa: E402
 
 import pytest  # noqa: E402
+from sqlalchemy import text  # noqa: E402
 
 from fin_api import worker  # noqa: E402
 from fin_core.alerts.base import ChannelConfigError  # noqa: E402
@@ -30,8 +31,11 @@ CREDS = {"TELEGRAM_BOT_TOKEN": "123:SECRET", "TELEGRAM_CHAT_ID": "42"}
 
 
 class FakeBot:
-    def __init__(self, fail_first=False):
-        self.offsets, self.fail_first = [], fail_first
+    def __init__(self, fail_first=False, persisted=None):
+        self.offsets, self.fail_first, self.persisted = [], fail_first, persisted
+
+    def load_offset(self):
+        return self.persisted
 
     def poll_once(self, offset, timeout):
         self.offsets.append(offset)
@@ -118,23 +122,93 @@ def test_main_exits_with_status_2_on_a_bad_channel_configuration(sqlite_url, mon
 
 
 def test_the_leader_lock_is_a_noop_on_sqlite(sqlite_url):
-    assert worker.acquire_leader_lock(make_engine(sqlite_url)) is None
-    worker.release_leader_lock(None)  # nothing to release
+    lock = worker.LeaderLock(make_engine(sqlite_url))
+    lock.acquire()
+    assert lock.active is False and lock.ensure() is True
+    lock.release()  # nothing to release
+
+
+async def test_a_worker_that_loses_leadership_stops_itself_with_status_3(sqlite_url, monkeypatch):
+    monkeypatch.setattr(worker, "retry_failed", lambda *a, **k: 0)
+
+    class Usurped:
+        def ensure(self):
+            raise worker.WorkerAlreadyRunningError("another worker instance holds the leader lock")
+
+    ctx = worker.WorkerContext(
+        make_engine(sqlite_url), [InAppChannel()], AlertPolicy.load(), lock=Usurped()
+    )
+    stop = asyncio.Event()
+    await asyncio.wait_for(worker.run(stop, interval=0.05, ctx=ctx), timeout=2)
+    assert stop.is_set() and ctx.exit_code == 3  # it stopped on its own
+
+
+async def test_a_database_outage_while_checking_the_lock_does_not_stop_the_worker(
+    sqlite_url, monkeypatch
+):
+    monkeypatch.setattr(worker, "retry_failed", lambda *a, **k: 0)
+
+    class Flaky:
+        calls = 0
+
+        def ensure(self):
+            Flaky.calls += 1
+            raise ConnectionError("db down")
+
+    ctx = worker.WorkerContext(
+        make_engine(sqlite_url), [InAppChannel()], AlertPolicy.load(), lock=Flaky()
+    )
+    await run_for(ctx)
+    assert Flaky.calls >= 2 and ctx.exit_code == 0  # kept running and kept checking
+
+
+def _postgres_url():
+    url = os.environ.get("TEST_DATABASE_URL")
+    if not url:
+        pytest.skip("TEST_DATABASE_URL not set")
+    return url
 
 
 @pytest.mark.postgres
 def test_only_one_worker_can_hold_the_leader_lock_on_postgres():
-    url = os.environ.get("TEST_DATABASE_URL")
-    if not url:
-        pytest.skip("TEST_DATABASE_URL not set")
-    first_engine, second_engine = make_engine(url), make_engine(url)
-    first = worker.acquire_leader_lock(first_engine)
+    url = _postgres_url()
+    e1, e2 = make_engine(url), make_engine(url)
+    first, second = worker.LeaderLock(e1), worker.LeaderLock(e2)
+    first.acquire()
     try:
         with pytest.raises(worker.WorkerAlreadyRunningError):
-            worker.acquire_leader_lock(second_engine)
+            second.acquire()
+        assert first.ensure() is True  # still held
     finally:
-        worker.release_leader_lock(first)
-    second = worker.acquire_leader_lock(second_engine)  # free again after the release
-    worker.release_leader_lock(second)
-    first_engine.dispose()
-    second_engine.dispose()
+        first.release()
+    second.acquire()  # free again after the release
+    second.release()
+    e1.dispose()
+    e2.dispose()
+
+
+@pytest.mark.postgres
+def test_a_lost_lock_is_noticed_and_reacquired_or_the_worker_gives_up():
+    url = _postgres_url()
+    e1, e2, admin = make_engine(url), make_engine(url), make_engine(url)
+    first, rival = worker.LeaderLock(e1), worker.LeaderLock(e2)
+    first.acquire()
+
+    def kill_first_connection():  # what a database restart does to the lock's connection
+        pid = first._conn.execute(text("SELECT pg_backend_pid()")).scalar()
+        with admin.connect().execution_options(isolation_level="AUTOCOMMIT") as c:
+            c.execute(text("SELECT pg_terminate_backend(:p)"), {"p": pid})
+
+    try:
+        kill_first_connection()
+        assert first.ensure() is False  # lost, nobody else took it: re-acquired
+        assert first.ensure() is True  # and held again
+        kill_first_connection()
+        rival.acquire()  # another instance starts in the gap
+        with pytest.raises(worker.WorkerAlreadyRunningError):
+            first.ensure()  # the original must give up
+    finally:
+        first.release()
+        rival.release()
+        for e in (e1, e2, admin):
+            e.dispose()

@@ -4,7 +4,7 @@ from prefect.testing.utilities import prefect_test_harness
 from fin_core.db import migrate
 from fin_core.db.session import make_engine
 from fin_core.ingest import RunSummary
-from fin_flows import scoring, serve
+from fin_flows import pipeline, scoring, serve
 
 
 @pytest.fixture
@@ -56,9 +56,14 @@ def test_flow_fails_loudly_on_an_invalid_channel_configuration(engine, monkeypat
         scoring.score_universe_flow()
 
 
-def test_schedules_cover_every_flow_and_scoring_runs_after_the_data_is_fresh():
-    names = [flow.name for flow, _ in serve.SCHEDULES]
-    assert names == [
+def test_one_scheduled_pipeline_and_every_step_available_by_hand():
+    assert [(f.name, cron) for f, cron in serve.SCHEDULED] == [("daily-pipeline", "30 21 * * 1-5")]
+    assert [f.name for f in serve.MANUAL] == [name for name, _ in pipeline.steps()]
+    assert len(serve.deployments()) == len(serve.SCHEDULED) + len(serve.MANUAL)
+
+
+def test_pipeline_runs_ingestion_in_order_and_scoring_last():
+    assert [n for n, _ in pipeline.steps()] == [
         "sync-universe",
         "ingest-prices",
         "ingest-yields",
@@ -66,11 +71,34 @@ def test_schedules_cover_every_flow_and_scoring_runs_after_the_data_is_fresh():
         "score-universe",
     ]
 
-    def when(cron):
-        minute, hour, *_ = cron.split()
-        return int(hour), int(minute)
 
-    times = {flow.name: when(cron) for flow, cron in serve.SCHEDULES}
-    for ingest in ("ingest-prices", "ingest-yields", "ingest-fundamentals"):
-        assert times["score-universe"] > times[ingest]
-    assert len(serve.deployments()) == len(serve.SCHEDULES)
+def test_pipeline_runs_every_step_even_after_a_failure_then_fails(monkeypatch):
+    ran = []
+
+    def ok(name):
+        return lambda: ran.append(name) or {"status": "ok"}
+
+    def boom():
+        ran.append("ingest-prices")
+        raise RuntimeError("prices down")
+
+    monkeypatch.setattr(
+        pipeline,
+        "steps",
+        lambda: [
+            ("sync-universe", ok("sync-universe")),
+            ("ingest-prices", boom),
+            ("score-universe", ok("score-universe")),
+        ],
+    )
+    with prefect_test_harness(), pytest.raises(RuntimeError, match="ingest-prices"):
+        pipeline.daily_pipeline_flow()
+    assert ran == ["sync-universe", "ingest-prices", "score-universe"]
+
+
+def test_pipeline_returns_each_step_result_when_all_succeed(monkeypatch):
+    monkeypatch.setattr(
+        pipeline, "steps", lambda: [("a", lambda: {"n": 1}), ("b", lambda: {"n": 2})]
+    )
+    with prefect_test_harness():
+        assert pipeline.daily_pipeline_flow() == {"a": {"n": 1}, "b": {"n": 2}}

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import hmac
+import logging
+import os
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from functools import lru_cache
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import Engine, select, text
 from sqlalchemy.exc import SQLAlchemyError
@@ -22,9 +25,13 @@ from fin_core.metrics import UnknownSecurityError
 from fin_core.models import ScoreResult, SecurityMetrics, Signal
 from fin_core.scoring import score_security
 
+log = logging.getLogger("fin_api")
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    if not os.environ.get("API_TOKEN"):
+        log.warning("API_TOKEN is not set: state-changing endpoints are disabled (503)")
     yield
     dispose_engines()  # close pooled database connections on shutdown
 
@@ -60,6 +67,26 @@ class ScoreResponse(BaseModel):
 
 class TickerScoreResponse(ScoreResponse):
     metrics: SecurityMetrics  # what was scored, including data-quality warnings
+
+
+def require_write_token(authorization: str | None = Header(default=None)) -> None:
+    """Guard for state-changing endpoints: ``Authorization: Bearer <API_TOKEN>``.
+
+    Fails closed: with no ``API_TOKEN`` configured the endpoints are disabled (503) rather than
+    open. The watchlist decides which sell alerts are sent at all, so it must not be writable by
+    whoever can reach the port. Read endpoints are not covered; keep the API behind the proxy's
+    own auth until the UI has a login.
+    """
+    expected = os.environ.get("API_TOKEN")
+    if not expected:
+        raise HTTPException(503, detail="write endpoints are disabled: API_TOKEN is not configured")
+    scheme, _, supplied = (authorization or "").partition(" ")
+    if scheme.lower() != "bearer" or not hmac.compare_digest(
+        supplied.strip().encode(), expected.encode()
+    ):
+        raise HTTPException(
+            401, detail="missing or invalid bearer token", headers={"WWW-Authenticate": "Bearer"}
+        )
 
 
 @app.get("/healthz")
@@ -228,7 +255,7 @@ def list_alerts(
     )
 
 
-@app.post("/api/alerts/{alert_id}/read")
+@app.post("/api/alerts/{alert_id}/read", dependencies=[Depends(require_write_token)])
 def mark_read(alert_id: int) -> dict[str, object]:
     with _db() as s:
         if not signals_repo.mark_alert_read(s, alert_id, datetime.now(UTC)):
@@ -248,12 +275,17 @@ class OpportunityOut(BaseModel):
 
 
 @app.get("/api/opportunities", response_model=list[OpportunityOut])
-def opportunities(limit: int = Query(20, ge=1, le=200)) -> list[OpportunityOut]:
-    """Securities ranked by the conviction of their latest actionable score (stale or
-    unevaluated runs are excluded; see ``computed_at`` for the age)."""
+def opportunities(
+    limit: int = Query(20, ge=1, le=200), max_age_days: int = Query(10, ge=1, le=3650)
+) -> list[OpportunityOut]:
+    """Securities ranked by the conviction of their latest actionable score. Stale or
+    unevaluated runs are excluded, and so is any score older than ``max_age_days`` (default 10,
+    which spans weekends and holidays), so a view from before a long data outage cannot sit in
+    the ranking."""
+    newer_than = datetime.now(UTC) - timedelta(days=max_age_days)
     with _db() as s:
         out = []
-        for sec, score in signals_repo.opportunities(s, limit=limit):
+        for sec, score in signals_repo.opportunities(s, limit=limit, newer_than=newer_than):
             d = score.details or {}
             metrics = d.get("metrics", {})
             out.append(
@@ -281,7 +313,7 @@ def get_watchlist() -> dict[str, list[str]]:
         return {"tickers": signals_repo.watchlist_tickers(s)}
 
 
-@app.put("/api/watchlist/{ticker}")
+@app.put("/api/watchlist/{ticker}", dependencies=[Depends(require_write_token)])
 def watch(ticker: str) -> dict[str, object]:
     with _db() as s:
         sec = repo.get_security(s, ticker)
@@ -290,7 +322,7 @@ def watch(ticker: str) -> dict[str, object]:
         return {"ticker": sec.ticker, "added": signals_repo.watchlist_add(s, sec.id)}
 
 
-@app.delete("/api/watchlist/{ticker}")
+@app.delete("/api/watchlist/{ticker}", dependencies=[Depends(require_write_token)])
 def unwatch(ticker: str) -> dict[str, object]:
     with _db() as s:
         sec = repo.get_security(s, ticker)

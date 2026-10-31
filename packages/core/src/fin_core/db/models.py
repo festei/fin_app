@@ -170,6 +170,11 @@ class SignalRecord(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+    # Set once the alert decision was made (alerted or deliberately suppressed). NULL means the
+    # decision is still owed, so an interrupted run can be finished without re-alerting signals
+    # that the policy suppressed on purpose.
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    suppressed_reason: Mapped[str | None] = mapped_column(String(200))
 
 
 class AlertRecord(Base):
@@ -208,10 +213,13 @@ class AlertDelivery(Base):
         ForeignKey("alerts.id", ondelete="CASCADE"), nullable=False
     )
     channel: Mapped[str] = mapped_column(String(32), nullable=False)
-    status: Mapped[str] = mapped_column(String(16), nullable=False)  # sent | failed | skipped
+    # pending (created, or an attempt in flight) | sent | failed | skipped (channel muted)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error: Mapped[str | None] = mapped_column(String(500))  # never contains credentials
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # when the latest attempt started; with `attempts` it drives retry backoff and the atomic claim
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class WatchlistEntry(Base):
@@ -230,3 +238,6 @@ class ChannelState(Base):
 
     channel: Mapped[str] = mapped_column(String(32), primary_key=True)
     muted_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Telegram update offset: the next update to fetch, persisted so a restart never replays
+    # commands that were already handled.
+    update_cursor: Mapped[int | None] = mapped_column(BigInteger)

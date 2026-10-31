@@ -144,14 +144,42 @@ class TelegramBot:
             log.exception("telegram command %s failed", command)
             return "Something went wrong handling that command."
 
+    def load_offset(self) -> int | None:
+        """The persisted next-update offset (``None`` on first run or if it cannot be read)."""
+        try:
+            with session_scope(self.engine) as s:
+                return signals_repo.update_cursor(s, CHANNEL)
+        except Exception as exc:
+            log.warning("could not load the telegram offset (%s)", type(exc).__name__)
+            return None
+
+    def _save_offset(self, offset: int) -> None:
+        try:
+            with session_scope(self.engine) as s:
+                signals_repo.set_update_cursor(s, CHANNEL, offset)
+        except Exception as exc:
+            log.warning("could not save the telegram offset (%s)", type(exc).__name__)
+
     def poll_once(self, offset: int | None, timeout: int = 25) -> int | None:
-        """One long-poll round: answer every command, return the next update offset."""
+        """One long-poll round: answer every command, return the next update offset.
+
+        Each update is acknowledged (offset advanced and persisted) *before* its command runs, so
+        a command is executed at most once: a failing reply, an exception, or a restart can never
+        replay ``/mute`` or ``/unwatch``. The price is that a command interrupted mid-way is lost
+        and the user has to resend it. A reply that cannot be sent is logged and dropped.
+        """
         next_offset = offset
         for update in self.client.get_updates(offset, timeout):
+            if "update_id" not in update:
+                continue
             next_offset = update["update_id"] + 1
+            self._save_offset(next_offset)
             reply = self.handle_update(update)
             if reply:
-                self.client.send_message(reply)
+                try:
+                    self.client.send_message(reply)
+                except ChannelError as exc:
+                    log.warning("could not send a telegram reply: %s", exc)
         return next_offset
 
     # --- commands ---------------------------------------------------------------------------

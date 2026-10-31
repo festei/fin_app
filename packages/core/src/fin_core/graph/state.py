@@ -16,6 +16,8 @@ class GraphState(TypedDict, total=False):
     metrics: SecurityMetrics
     config: dict[str, Any]
     previous_conviction: float | None
+    buy_armed: bool  # hysteresis: a new buy needs conviction to have fallen below BUY_REARM_BELOW
+    sell_armed: bool  # ... and a new sell needs it to have recovered to SELL_REARM_ABOVE
     philosophy_results: Annotated[dict[str, ScoreResult], merge_results]
     guardrail_veto: bool
     guardrail_results: dict[str, ScoreResult]

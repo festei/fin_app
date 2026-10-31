@@ -12,7 +12,6 @@ from fin_core.alerts.base import AlertMessage, ChannelError
 from fin_core.alerts.channels import InAppChannel
 from fin_core.alerts.pipeline import (
     build_message_text,
-    deliver,
     feed_item,
     process_signals,
     retry_failed,
@@ -84,7 +83,8 @@ def last_alert(hours_ago, conviction=80.0, naive=False):
 
 def test_default_policy_values():
     assert (POLICY.cooldown_hours, POLICY.material_change) == (24, 10)
-    assert POLICY.sell_only_for_watchlist is True and POLICY.max_delivery_attempts == 3
+    assert POLICY.sell_only_for_watchlist is True and POLICY.max_delivery_attempts == 6
+    assert POLICY.retry_backoff_minutes == (2, 10, 30, 120, 360)
 
 
 def test_sells_alert_only_for_watched_stocks_buys_for_everyone():
@@ -209,24 +209,39 @@ def test_a_failing_channel_is_recorded_and_never_blocks_the_others(raw_engine, s
     assert error == "simulated outage"
 
 
-def test_failed_deliveries_are_retried_a_bounded_number_of_times(raw_engine, seed_company):
+def test_failed_deliveries_are_retried_with_backoff_up_to_the_attempt_limit(
+    raw_engine, seed_company
+):
     seed_company(raw_engine, "AAA", price=25.0)
     flaky = FakeChannel("flaky", fail=True)
     process_signals(raw_engine, new_signal_ids(raw_engine), POLICY, [IN_APP, flaky], NOW)
-    assert retry_failed(raw_engine, [IN_APP, flaky], POLICY, NOW) == 0  # attempt 2 fails
-    assert retry_failed(raw_engine, [IN_APP, flaky], POLICY, NOW) == 0  # attempt 3 fails
-    assert [d[3] for d in deliveries(raw_engine) if d[1] == "flaky"] == [3]
-    flaky.fail = False
-    assert retry_failed(raw_engine, [IN_APP, flaky], POLICY, NOW) == 0  # budget is spent: no resend
+    assert [d[2:] for d in deliveries(raw_engine) if d[1] == "flaky"] == [("failed", 1)]
+
+    # backoff is [2, 10, 30, 120, 360] minutes: nothing is due a minute after the first failure
+    assert retry_failed(raw_engine, [IN_APP, flaky], POLICY, NOW + timedelta(minutes=1)) == 0
+    assert flaky.sent == [] and [d[3] for d in deliveries(raw_engine) if d[1] == "flaky"] == [1]
+
+    when = NOW
+    for waited, attempts in ((2, 2), (10, 3), (30, 4), (120, 5), (360, 6)):
+        when += timedelta(minutes=waited)
+        retry_failed(raw_engine, [IN_APP, flaky], POLICY, when)  # still failing
+        assert [d[3] for d in deliveries(raw_engine) if d[1] == "flaky"] == [attempts]
+
+    flaky.fail = False  # the channel recovers, but the attempt budget (6) is spent
+    assert retry_failed(raw_engine, [IN_APP, flaky], POLICY, when + timedelta(days=1)) == 0
     assert flaky.sent == []
 
-    # a channel that recovers within the budget does get its alert
-    other = FakeChannel("other", fail=True)
+
+def test_a_channel_that_recovers_within_the_budget_gets_its_alert(raw_engine, seed_company):
     seed_company(raw_engine, "BBB", price=25.0)
+    other = FakeChannel("other", fail=True)
     process_signals(raw_engine, new_signal_ids(raw_engine, ["BBB"]), POLICY, [other], NOW)
     other.fail = False
-    assert retry_failed(raw_engine, [other], POLICY, NOW) == 1
+    assert retry_failed(raw_engine, [other], POLICY, NOW + timedelta(minutes=3)) == 1
     assert [d for d in deliveries(raw_engine) if d[1] == "other"][0][2:] == ("sent", 2)
+    assert [m.ticker for m in other.sent] == ["BBB"]
+    # sent deliveries are never sent again
+    assert retry_failed(raw_engine, [other], POLICY, NOW + timedelta(days=2)) == 0
 
 
 def test_a_muted_channel_is_skipped_but_the_feed_is_not(raw_engine, seed_company):
@@ -280,4 +295,3 @@ def test_feed_items_and_read_state(raw_engine, seed_company):
         assert signals_repo.mark_alert_read(s, 99999, NOW) is False
         assert signals_repo.list_alerts(s, unread_only=True) == []
         assert signals_repo.list_alerts(s, before_id=alert.id) == []  # cursor
-    assert deliver  # imported for completeness of the public surface

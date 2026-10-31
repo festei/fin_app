@@ -6,7 +6,8 @@ runs as a scheduled Prefect flow (``fin_flows.scoring``); this process handles w
 always on.
 
 * Exactly one instance may be active: on Postgres a session-level advisory lock is held for the
-  life of the process; a second instance exits instead of double-sending.
+  life of the process and re-verified every round (it is lost if the database restarts); a second
+  instance exits instead of double-sending, and a worker that loses leadership stops itself.
 * Channel configuration is validated at startup (``ChannelConfigError``): Telegram switched on
   without credentials stops the worker loudly instead of failing at the first alert.
 * Without a database it only logs a heartbeat (bare dev runs).
@@ -47,7 +48,8 @@ class WorkerContext:
     channels: list[AlertChannel]
     policy: AlertPolicy
     bot: TelegramBot | None = None
-    lock: Connection | None = field(default=None, repr=False)
+    lock: LeaderLock | None = field(default=None, repr=False)
+    exit_code: int = 0  # non-zero when the worker stopped itself (e.g. lost leadership)
 
 
 def build_context(flags: FeatureFlags | None = None, env=None, http_client=None):
@@ -63,26 +65,77 @@ def build_context(flags: FeatureFlags | None = None, env=None, http_client=None)
     return WorkerContext(engine=engine, channels=channels, policy=AlertPolicy.load(), bot=bot)
 
 
-def acquire_leader_lock(engine: Engine) -> Connection | None:
-    """Take the single-instance lock. Postgres only; other databases (SQLite in dev/tests) have
-    no cross-process advisory locks, so this is a no-op returning ``None``."""
-    if engine.dialect.name != "postgresql":
-        return None
-    conn = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
-    got = conn.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": LEADER_LOCK_KEY}).scalar()
-    if not got:
-        conn.close()
-        raise WorkerAlreadyRunningError("another worker instance holds the leader lock")
-    return conn
+class LeaderLock:
+    """The single-instance lock: a Postgres session-level advisory lock held on a dedicated
+    connection. Other databases (SQLite in dev/tests) have no cross-process advisory locks, so it
+    is a no-op there.
 
+    The lock lives and dies with that connection: if the database restarts or the connection is
+    dropped, the lock is gone while this process keeps running, and a second instance could start.
+    ``ensure`` therefore re-checks it every loop and re-acquires it, or raises
+    ``WorkerAlreadyRunningError`` if another instance took over meanwhile.
+    """
 
-def release_leader_lock(conn: Connection | None) -> None:
-    if conn is None:
-        return
-    try:
-        conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": LEADER_LOCK_KEY})
-    finally:
-        conn.close()
+    def __init__(self, engine: Engine):
+        self.engine = engine
+        self._conn: Connection | None = None
+
+    @property
+    def active(self) -> bool:
+        return self.engine.dialect.name == "postgresql"
+
+    def _take(self) -> Connection:
+        conn = self.engine.connect().execution_options(isolation_level="AUTOCOMMIT")
+        got = conn.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": LEADER_LOCK_KEY}).scalar()
+        if not got:
+            conn.close()
+            raise WorkerAlreadyRunningError("another worker instance holds the leader lock")
+        return conn
+
+    def acquire(self) -> None:
+        if self.active:
+            self._conn = self._take()
+
+    def _discard(self) -> None:
+        conn, self._conn = self._conn, None
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass  # the connection is already dead
+
+    def ensure(self) -> bool:
+        """``True`` if the lock was still held. ``False`` if it had been lost and was re-acquired.
+        Raises ``WorkerAlreadyRunningError`` if it was lost and another instance now holds it."""
+        if not self.active:
+            return True
+        if self._conn is not None:
+            try:
+                held = self._conn.execute(
+                    text(
+                        "SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND classid = 0 "
+                        "AND objid = :k AND pid = pg_backend_pid()"
+                    ),
+                    {"k": LEADER_LOCK_KEY},
+                ).scalar()
+                if held:
+                    return True
+            except Exception:
+                pass  # connection broken: fall through and re-acquire
+        self._discard()
+        self._conn = self._take()  # raises if someone else holds it now
+        log.warning("the leader lock had been lost; re-acquired it")
+        return False
+
+    def release(self) -> None:
+        if self._conn is None:
+            return
+        try:
+            self._conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": LEADER_LOCK_KEY})
+        except Exception:
+            pass
+        finally:
+            self._discard()
 
 
 async def _pause(stop: asyncio.Event, seconds: float) -> None:
@@ -94,6 +147,10 @@ async def _pause(stop: asyncio.Event, seconds: float) -> None:
 
 async def _bot_loop(bot: TelegramBot, stop: asyncio.Event) -> None:
     offset: int | None = None
+    try:  # resume where the last run stopped, so handled commands are never replayed
+        offset = await asyncio.to_thread(bot.load_offset)
+    except Exception as exc:
+        log.warning("could not load the telegram offset (%s); starting fresh", type(exc).__name__)
     while not stop.is_set():
         try:
             offset = await asyncio.to_thread(bot.poll_once, offset, BOT_POLL_TIMEOUT)
@@ -111,6 +168,16 @@ async def run(
     bot_task = asyncio.create_task(_bot_loop(ctx.bot, stop)) if ctx and ctx.bot else None
     try:
         while not stop.is_set():
+            if ctx is not None and ctx.lock is not None:
+                try:
+                    await asyncio.to_thread(ctx.lock.ensure)
+                except WorkerAlreadyRunningError as exc:
+                    log.error("%s; stopping so only one instance sends alerts", exc)
+                    ctx.exit_code = 3
+                    stop.set()
+                    break
+                except Exception as exc:  # the database is down: keep running, try next round
+                    log.warning("could not verify the leader lock (%s)", type(exc).__name__)
             if ctx is None:
                 log.info("heartbeat")
             else:
@@ -139,8 +206,9 @@ def main() -> None:
     if ctx is None:
         log.warning("no database configured: heartbeat only")
     else:
+        ctx.lock = LeaderLock(ctx.engine)
         try:
-            ctx.lock = acquire_leader_lock(ctx.engine)
+            ctx.lock.acquire()
         except WorkerAlreadyRunningError as exc:
             log.error("%s; exiting", exc)
             raise SystemExit(3) from None
@@ -156,8 +224,11 @@ def main() -> None:
         asyncio.run(_main())
     finally:
         if ctx is not None:
-            release_leader_lock(ctx.lock)
+            if ctx.lock is not None:
+                ctx.lock.release()
             ctx.engine.dispose()
+    if ctx is not None and ctx.exit_code:
+        raise SystemExit(ctx.exit_code)
 
 
 if __name__ == "__main__":

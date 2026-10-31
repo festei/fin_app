@@ -12,12 +12,15 @@ from fin_core.db import migrate, repo, signals_repo
 from fin_core.db.models import AlertDelivery
 from fin_core.db.session import make_engine, session_scope
 
-client = TestClient(app)
+TOKEN = "test-token"
+client = TestClient(app, headers={"Authorization": f"Bearer {TOKEN}"})
+anonymous = TestClient(app)
 NOW = datetime(2025, 3, 10, 12, 0, tzinfo=UTC)
 
 
 @pytest.fixture(autouse=True)
-def _close_cached_engines():
+def _close_cached_engines(monkeypatch):
+    monkeypatch.setenv("API_TOKEN", TOKEN)
     yield
     dispose_engines()
 
@@ -219,3 +222,53 @@ def test_an_unreachable_database_is_503_without_connection_details(monkeypatch, 
     r = client.get("/api/alerts")
     assert r.status_code == 503 and "database unavailable" in r.json()["detail"]
     assert "missing-dir" not in r.json()["detail"]
+
+
+WRITES = [
+    ("put", "/api/watchlist/AAA"),
+    ("delete", "/api/watchlist/AAA"),
+    ("post", "/api/alerts/1/read"),
+]
+
+
+@pytest.mark.parametrize(("method", "path"), WRITES)
+def test_writes_need_the_bearer_token(db, method, path):
+    call = getattr(anonymous, method)
+    assert call(path).status_code == 401
+    assert call(path, headers={"Authorization": "Bearer wrong"}).status_code == 401
+    assert call(path, headers={"Authorization": TOKEN}).status_code == 401  # no scheme
+    assert call(path, headers={"Authorization": f"bearer {TOKEN}"}).status_code != 401
+    assert call(path).headers["www-authenticate"] == "Bearer"
+
+
+@pytest.mark.parametrize(("method", "path"), WRITES)
+def test_writes_are_disabled_when_no_token_is_configured(db, monkeypatch, method, path):
+    monkeypatch.delenv("API_TOKEN", raising=False)
+    assert getattr(client, method)(path).status_code == 503
+    monkeypatch.setenv("API_TOKEN", "")
+    assert getattr(client, method)(path).status_code == 503
+
+
+def test_a_rejected_write_changes_nothing(db):
+    assert anonymous.put("/api/watchlist/AAA").status_code == 401
+    assert client.get("/api/watchlist").json() == {"tickers": []}
+
+
+def test_reads_stay_open(db):
+    assert anonymous.get("/api/watchlist").status_code == 200
+    assert anonymous.get("/api/alerts").status_code == 200
+
+
+def test_opportunities_drop_scores_older_than_max_age_days(db):
+    add_score(db, "AAA", 80.0)  # computed_at is the real now
+    with session_scope(db) as s:
+        sid = repo.get_security(s, "BBB").id
+        old = signals_repo.insert_score(
+            s, security_id=sid, as_of=NOW, conviction=90.0, all_abstained=False,
+            signal_blocked=False, explanation="x", details={},
+        )  # fmt: skip
+        old.computed_at = datetime.now(UTC) - timedelta(days=30)
+    assert [o["ticker"] for o in client.get("/api/opportunities").json()] == ["AAA"]
+    both = client.get("/api/opportunities", params={"max_age_days": 60}).json()
+    assert {o["ticker"] for o in both} == {"AAA", "BBB"}
+    assert client.get("/api/opportunities", params={"max_age_days": 0}).status_code == 422

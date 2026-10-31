@@ -9,6 +9,8 @@ The graph decides *whether* a transition happened (``decide_node``) given a
   conviction and is not a baseline either, so the next real score is "emerging", not "buy".
 * re-running with unchanged data yields the same conviction, hence no transition, hence no
   signal: scoring is idempotent.
+* hysteresis: after a buy the next buy needs conviction to have fallen below ``BUY_REARM_BELOW``
+  (after a sell: recovered to ``SELL_REARM_ABOVE``), so flapping around a line signals once.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ from fin_core.db import repo, signals_repo
 from fin_core.db.models import ScoreRecord, SignalRecord
 from fin_core.db.session import session_scope
 from fin_core.graph import build_graph, load_config
+from fin_core.graph.build import BUY_REARM_BELOW, SELL_REARM_ABOVE
 from fin_core.scoring import score_security
 
 
@@ -73,11 +76,20 @@ def score_and_record(
     """Score one stored security, store the run, and store the signal if one was emitted."""
     sec = repo.get_security(session, ticker)
     previous = signals_repo.latest_actionable_score(session, sec.id) if sec else None
+    buy_armed, sell_armed = (
+        signals_repo.armed_state(
+            session, sec.id, buy_rearm_below=BUY_REARM_BELOW, sell_rearm_above=SELL_REARM_ABOVE
+        )
+        if sec
+        else (True, True)
+    )
     out = score_security(
         session,
         ticker,
         as_of,
         previous_conviction=previous.conviction if previous else None,
+        buy_armed=buy_armed,
+        sell_armed=sell_armed,
         graph=graph,
         config=config,
     )

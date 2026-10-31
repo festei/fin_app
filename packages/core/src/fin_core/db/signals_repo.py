@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from fin_core.db.models import (
@@ -95,8 +95,12 @@ def latest_score(session: Session, security_id: int) -> ScoreRecord | None:
     )
 
 
-def opportunities(session: Session, limit: int = 20) -> list[tuple[Security, ScoreRecord]]:
-    """Latest actionable score per active security, best conviction first."""
+def opportunities(
+    session: Session, limit: int = 20, newer_than: datetime | None = None
+) -> list[tuple[Security, ScoreRecord]]:
+    """Latest actionable score per active security, best conviction first. With ``newer_than``
+    only scores computed at or after it are listed, so an old view from before a long data
+    outage cannot sit in the ranking."""
     rn = (
         func.row_number()
         .over(
@@ -115,10 +119,65 @@ def opportunities(session: Session, limit: int = 20) -> list[tuple[Security, Sco
         .join(ScoreRecord, ScoreRecord.security_id == Security.id)
         .join(inner, inner.c.id == ScoreRecord.id)
         .where(inner.c.rn == 1, Security.active.is_(True))
+        .where(ScoreRecord.computed_at >= newer_than if newer_than is not None else True)
         .order_by(ScoreRecord.conviction.desc(), Security.ticker)
         .limit(limit)
     )
     return [(sec, score) for sec, score in session.execute(q).all()]
+
+
+def pending_signal_ids(session: Session) -> list[int]:
+    """Signals whose alert decision is still owed (an interrupted run left them unprocessed)."""
+    q = select(SignalRecord.id).where(SignalRecord.processed_at.is_(None)).order_by(SignalRecord.id)
+    return list(session.scalars(q))
+
+
+def mark_signal_processed(
+    session: Session, signal_id: int, when: datetime, suppressed_reason: str | None = None
+) -> None:
+    signal = session.get(SignalRecord, signal_id)
+    signal.processed_at = when
+    signal.suppressed_reason = (suppressed_reason or None) and suppressed_reason[:200]
+    session.flush()
+
+
+def armed_state(
+    session: Session, security_id: int, *, buy_rearm_below: float, sell_rearm_above: float
+) -> tuple[bool, bool]:
+    """``(buy_armed, sell_armed)``: hysteresis against flapping around a threshold.
+
+    After a buy (or emerging) signal, another buy needs conviction to have fallen below
+    ``buy_rearm_below`` since; after a sell, another sell needs it to have recovered to at least
+    ``sell_rearm_above``. Only actionable scores count. With no earlier signal of that kind the
+    side is armed.
+    """
+
+    def armed(kinds: tuple[str, ...], rearmed) -> bool:
+        last = session.scalar(
+            select(SignalRecord)
+            .where(SignalRecord.security_id == security_id, SignalRecord.kind.in_(kinds))
+            .order_by(SignalRecord.id.desc())
+            .limit(1)
+        )
+        if last is None:
+            return True
+        crossed = session.scalar(
+            select(func.count())
+            .select_from(ScoreRecord)
+            .where(
+                ScoreRecord.security_id == security_id,
+                ScoreRecord.id > last.score_id,
+                ScoreRecord.conviction.is_not(None),
+                ScoreRecord.signal_blocked.is_(False),
+                rearmed,
+            )
+        )
+        return bool(crossed)
+
+    return (
+        armed(("buy", "emerging"), ScoreRecord.conviction < buy_rearm_below),
+        armed(("sell",), ScoreRecord.conviction >= sell_rearm_above),
+    )
 
 
 # --- watchlist ------------------------------------------------------------------------------
@@ -211,20 +270,85 @@ def deliveries_for(session: Session, alert_ids: Sequence[int]) -> list[AlertDeli
     )
 
 
-def failed_deliveries(
+def open_deliveries(
     session: Session, channel: str, max_attempts: int
 ) -> list[tuple[AlertDelivery, AlertRecord]]:
+    """Deliveries still owed on a channel: ``pending`` (new, or an attempt that may have died) and
+    ``failed``, with attempts left. Whether one is *due* (backoff) is decided by the caller."""
     q = (
         select(AlertDelivery, AlertRecord)
         .join(AlertRecord, AlertRecord.id == AlertDelivery.alert_id)
         .where(
             AlertDelivery.channel == channel,
-            AlertDelivery.status == "failed",
+            AlertDelivery.status.in_(("pending", "failed")),
             AlertDelivery.attempts < max_attempts,
         )
         .order_by(AlertDelivery.id)
     )
     return [(d, a) for d, a in session.execute(q).all()]
+
+
+def add_delivery(
+    session: Session,
+    alert_id: int,
+    channel: str,
+    status: str,
+    *,
+    attempts: int = 0,
+    error: str | None = None,
+    when: datetime | None = None,
+) -> AlertDelivery:
+    row = AlertDelivery(
+        alert_id=alert_id,
+        channel=channel,
+        status=status,
+        attempts=attempts,
+        error=error,
+        last_attempt_at=when if attempts else None,
+        delivered_at=when if status == "sent" else None,
+    )
+    session.add(row)
+    session.flush()
+    return row
+
+
+def claim_delivery(
+    session: Session, delivery_id: int, expected_attempts: int, now: datetime
+) -> bool:
+    """Atomically take one delivery attempt. The compare-and-set on ``attempts`` means that of
+    several processes that saw the same row, exactly one wins; the others must not send."""
+    result = session.execute(
+        update(AlertDelivery)
+        .where(
+            AlertDelivery.id == delivery_id,
+            AlertDelivery.attempts == expected_attempts,
+            AlertDelivery.status.in_(("pending", "failed")),
+        )
+        .values(attempts=expected_attempts + 1, status="pending", last_attempt_at=now)
+    )
+    return result.rowcount == 1
+
+
+def finish_delivery(
+    session: Session, delivery_id: int, status: str, error: str | None, now: datetime
+) -> None:
+    session.execute(
+        update(AlertDelivery)
+        .where(AlertDelivery.id == delivery_id)
+        .values(
+            status=status,
+            error=error[:500] if error else None,
+            delivered_at=now if status == "sent" else None,
+        )
+    )
+
+
+def skip_delivery(session: Session, delivery_id: int, reason: str) -> None:
+    session.execute(
+        update(AlertDelivery)
+        .where(AlertDelivery.id == delivery_id)
+        .values(status="skipped", error=reason[:500])
+    )
 
 
 def muted_until(session: Session, channel: str) -> datetime | None:
@@ -238,4 +362,18 @@ def set_muted_until(session: Session, channel: str, until: datetime | None) -> N
         session.add(ChannelState(channel=channel, muted_until=until))
     else:
         state.muted_until = until
+    session.flush()
+
+
+def update_cursor(session: Session, channel: str) -> int | None:
+    state = session.get(ChannelState, channel)
+    return state.update_cursor if state else None
+
+
+def set_update_cursor(session: Session, channel: str, value: int) -> None:
+    state = session.get(ChannelState, channel)
+    if state is None:
+        session.add(ChannelState(channel=channel, update_cursor=value))
+    else:
+        state.update_cursor = value
     session.flush()

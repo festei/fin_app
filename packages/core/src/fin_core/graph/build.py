@@ -19,6 +19,11 @@ from fin_core.models import SecurityMetrics, Signal
 
 BUY_THRESHOLD = 70.0
 SELL_THRESHOLD = 50.0
+# Hysteresis so a conviction flapping around a line (69.9, 70.1, 69.9, ...) does not re-signal on
+# every crossing: after a buy the next buy needs conviction to have fallen below BUY_REARM_BELOW,
+# after a sell the next sell needs it to have recovered to SELL_REARM_ABOVE.
+BUY_REARM_BELOW = 65.0
+SELL_REARM_ABOVE = 55.0
 
 
 def load_config(path: Path | None = None) -> dict[str, Any]:
@@ -72,9 +77,11 @@ def decide_node(state: dict[str, Any]) -> dict[str, Any]:
     prev: float | None = state.get("previous_conviction")
     m: SecurityMetrics = state["metrics"]
     kind = None
-    if now >= BUY_THRESHOLD and (prev is None or prev < BUY_THRESHOLD):
+    crossed_up = now >= BUY_THRESHOLD and (prev is None or prev < BUY_THRESHOLD)
+    crossed_down = prev is not None and prev >= SELL_THRESHOLD and now < SELL_THRESHOLD
+    if crossed_up and state.get("buy_armed", True):
         kind = "emerging" if prev is None else "buy"
-    elif prev is not None and prev >= SELL_THRESHOLD and now < SELL_THRESHOLD:
+    elif crossed_down and state.get("sell_armed", True):
         kind = "sell"
     blockers = list(m.signal_blockers)
     if blockers:
