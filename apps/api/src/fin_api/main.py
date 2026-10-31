@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, date, datetime
 from functools import lru_cache
 
 from fastapi import FastAPI, HTTPException
@@ -7,10 +8,12 @@ from pydantic import BaseModel
 from sqlalchemy import text
 
 from fin_core import __version__
-from fin_core.db.session import database_configured, database_url, make_engine
+from fin_core.db.session import database_configured, database_url, make_engine, session_scope
 from fin_core.features import FeatureFlags
 from fin_core.graph import build_graph, load_config
+from fin_core.metrics import UnknownSecurityError
 from fin_core.models import ScoreResult, SecurityMetrics, Signal
+from fin_core.scoring import score_security
 
 app = FastAPI(title="fin-app API", version=__version__)
 
@@ -35,6 +38,10 @@ class ScoreResponse(BaseModel):
     explanation: str
     philosophy_results: dict[str, ScoreResult]
     signal: Signal | None
+
+
+class TickerScoreResponse(ScoreResponse):
+    metrics: SecurityMetrics  # what was scored, including data-quality warnings
 
 
 @app.get("/healthz")
@@ -88,4 +95,36 @@ def score(req: ScoreRequest) -> ScoreResponse:
         explanation=out["explanation"],
         philosophy_results=out["philosophy_results"],
         signal=out.get("signal"),
+    )
+
+
+@app.get("/api/securities/{ticker}/score", response_model=TickerScoreResponse)
+def score_ticker(
+    ticker: str, as_of: date | None = None, previous_conviction: float | None = None
+) -> TickerScoreResponse:
+    """Score a stored security from point-in-time metrics (default: as of today, UTC).
+
+    Needs a configured database with ingested fundamentals and prices. Data gaps are not
+    errors: they show up as ``metrics.warnings`` and as failed criteria.
+    """
+    if not database_configured():
+        raise HTTPException(503, detail="database not configured")
+    try:
+        with session_scope(_engine(database_url())) as session:
+            out = score_security(
+                session,
+                ticker,
+                as_of or datetime.now(UTC).date(),
+                previous_conviction=previous_conviction,
+                graph=_graph(),
+                config=_config(),
+            )
+    except UnknownSecurityError:
+        raise HTTPException(404, detail=f"unknown ticker {ticker.upper()}") from None
+    return TickerScoreResponse(
+        conviction=out["conviction"],
+        explanation=out["explanation"],
+        philosophy_results=out["philosophy_results"],
+        signal=out.get("signal"),
+        metrics=out["metrics"],
     )

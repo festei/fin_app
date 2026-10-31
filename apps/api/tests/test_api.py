@@ -55,3 +55,87 @@ def test_score_endpoint():
     data = r.json()
     assert data["conviction"] == 100.0
     assert data["signal"]["kind"] == "emerging"
+
+
+def seeded_db(monkeypatch, tmp_path):
+    from datetime import UTC, date, datetime
+    from decimal import Decimal
+
+    from fin_core.db import migrate, repo
+    from fin_core.db.session import make_engine, session_scope
+
+    clear_db_env(monkeypatch)
+    url = f"sqlite:///{tmp_path / 'score.db'}"
+    migrate.upgrade(url)
+    monkeypatch.setenv("DATABASE_URL", url)
+    engine = make_engine(url)
+
+    def f(concept, tag, value, unit="USD", instant=False):
+        end = date(2024, 12, 31)
+        return dict(
+            concept=concept,
+            tag=tag,
+            unit=unit,
+            period_start=end if instant else date(2024, 1, 1),
+            period_end=end,
+            instant=instant,
+            fiscal_year=2024,
+            fiscal_period="FY",
+            form="10-K",
+            filed=date(2025, 2, 15),
+            accession=f"a-{concept}",
+            value=Decimal(str(value)),
+        )
+
+    with session_scope(engine) as s:
+        repo.upsert_securities(s, [{"ticker": "ACME"}])
+        sid = repo.get_security(s, "ACME").id
+        repo.upsert_facts(
+            s,
+            sid,
+            [
+                f("EpsDiluted", "us-gaap/EarningsPerShareDiluted", 2.5, unit="USD/shares"),
+                f("StockholdersEquity", "us-gaap/StockholdersEquity", 1000, instant=True),
+                f("Assets", "us-gaap/Assets", 2000, instant=True),
+            ],
+        )
+        repo.upsert_prices(
+            s,
+            sid,
+            [
+                dict(
+                    ts=datetime(2025, 3, 3, 21, tzinfo=UTC),
+                    open=25.0,
+                    high=25.0,
+                    low=25.0,
+                    close=25.0,
+                    volume=1,
+                )
+            ],
+        )
+
+
+def test_score_a_stored_ticker(monkeypatch, tmp_path):
+    seeded_db(monkeypatch, tmp_path)
+    r = client.get("/api/securities/acme/score", params={"as_of": "2025-03-10"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["metrics"]["ticker"] == "ACME" and body["metrics"]["pe"] == 10.0
+    assert body["philosophy_results"]["graham"]["score"] > 0
+    # shares outstanding and others are missing: reported, not hidden
+    assert body["metrics"]["pb"] is None
+
+
+def test_score_ticker_surfaces_data_gaps_as_warnings(monkeypatch, tmp_path):
+    seeded_db(monkeypatch, tmp_path)
+    r = client.get("/api/securities/ACME/score", params={"as_of": "2023-01-01"})
+    assert r.status_code == 200
+    assert "no annual fundamentals available as of this date" in r.json()["metrics"]["warnings"]
+
+
+def test_score_unknown_ticker_is_404_and_no_database_is_503(monkeypatch, tmp_path):
+    seeded_db(monkeypatch, tmp_path)
+    assert client.get("/api/securities/NOPE/score").status_code == 404
+    clear_db_env(monkeypatch)
+    r = client.get("/api/securities/ACME/score")
+    assert r.status_code == 503 and "not configured" in r.json()["detail"]
