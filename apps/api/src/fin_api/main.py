@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime
 from functools import lru_cache
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import text
+from sqlalchemy import Engine, text
+from sqlalchemy.exc import SQLAlchemyError
 
 from fin_core import __version__
 from fin_core.db.session import database_configured, database_url, make_engine, session_scope
@@ -15,7 +18,14 @@ from fin_core.metrics import UnknownSecurityError
 from fin_core.models import ScoreResult, SecurityMetrics, Signal
 from fin_core.scoring import score_security
 
-app = FastAPI(title="fin-app API", version=__version__)
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    yield
+    dispose_engines()  # close pooled database connections on shutdown
+
+
+app = FastAPI(title="fin-app API", version=__version__, lifespan=lifespan)
 
 
 @lru_cache
@@ -50,9 +60,21 @@ def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@lru_cache
-def _engine(url: str):
-    return make_engine(url, connect_timeout=3)  # a probe must not hang
+_engines: dict[str, Engine] = {}
+
+
+def _engine(url: str) -> Engine:
+    """One engine (connection pool) per database URL, created lazily."""
+    if url not in _engines:
+        _engines[url] = make_engine(url, connect_timeout=3)  # a probe must not hang
+    return _engines[url]
+
+
+def dispose_engines() -> None:
+    """Close every pooled connection and forget the engines (shutdown, and between tests)."""
+    for engine in _engines.values():
+        engine.dispose()
+    _engines.clear()
 
 
 @app.get("/readyz")
@@ -105,22 +127,31 @@ def score_ticker(
     """Score a stored security from point-in-time metrics (default: as of today, UTC).
 
     Needs a configured database with ingested fundamentals and prices. Data gaps are not
-    errors: they show up as ``metrics.warnings`` and as failed criteria.
+    errors: they show up as ``metrics.warnings`` and as failed criteria, and while the data is
+    too poor to act on (``metrics.signal_blockers``) no signal is emitted. A future ``as_of`` is
+    rejected (422). ``previous_conviction`` is supplied by the caller only until signals and
+    their history are persisted.
     """
     if not database_configured():
         raise HTTPException(503, detail="database not configured")
+    today = datetime.now(UTC).date()
+    if as_of is not None and as_of > today:
+        raise HTTPException(422, detail=f"as_of {as_of} is in the future (today is {today} UTC)")
     try:
         with session_scope(_engine(database_url())) as session:
             out = score_security(
                 session,
                 ticker,
-                as_of or datetime.now(UTC).date(),
+                as_of or today,
                 previous_conviction=previous_conviction,
                 graph=_graph(),
                 config=_config(),
             )
     except UnknownSecurityError:
         raise HTTPException(404, detail=f"unknown ticker {ticker.upper()}") from None
+    except SQLAlchemyError as exc:
+        # Same answer as /readyz for an unavailable database; only the type, no connection details.
+        raise HTTPException(503, detail=f"database unavailable ({type(exc).__name__})") from None
     return TickerScoreResponse(
         conviction=out["conviction"],
         explanation=out["explanation"],

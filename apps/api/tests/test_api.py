@@ -1,8 +1,16 @@
+import pytest
 from fastapi.testclient import TestClient
 
-from fin_api.main import app
+from fin_api.main import app, dispose_engines
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _close_cached_engines():
+    """The API caches one engine per database URL; close them so tests do not leak pools."""
+    yield
+    dispose_engines()
 
 
 def clear_db_env(monkeypatch):
@@ -139,3 +147,28 @@ def test_score_unknown_ticker_is_404_and_no_database_is_503(monkeypatch, tmp_pat
     clear_db_env(monkeypatch)
     r = client.get("/api/securities/ACME/score")
     assert r.status_code == 503 and "not configured" in r.json()["detail"]
+
+
+def test_score_ticker_returns_503_when_the_database_is_down_not_500(monkeypatch, tmp_path):
+    clear_db_env(monkeypatch)
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'missing-dir' / 'x.db'}")
+    r = client.get("/api/securities/ACME/score")
+    assert r.status_code == 503
+    assert "database unavailable" in r.json()["detail"]
+    assert "missing-dir" not in r.json()["detail"]  # no connection details leaked
+
+
+def test_score_ticker_rejects_a_future_as_of(monkeypatch, tmp_path):
+    seeded_db(monkeypatch, tmp_path)
+    r = client.get("/api/securities/ACME/score", params={"as_of": "2999-01-01"})
+    assert r.status_code == 422 and "in the future" in r.json()["detail"]
+
+
+def test_dispose_engines_closes_and_forgets_the_cached_engines(monkeypatch, tmp_path):
+    from fin_api import main
+
+    seeded_db(monkeypatch, tmp_path)
+    assert client.get("/readyz").status_code == 200
+    assert main._engines  # an engine was created and cached
+    dispose_engines()
+    assert main._engines == {}

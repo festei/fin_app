@@ -21,6 +21,7 @@ Endpoints
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
 import time
@@ -33,6 +34,8 @@ import httpx
 
 from fin_core.providers.base import AccessDeniedError, ProviderError, RateLimitError
 from fin_core.providers.edgar_concepts import PERIODIC_FORMS, TAG_TO_CONCEPT
+
+log = logging.getLogger(__name__)
 
 TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
@@ -125,10 +128,16 @@ def normalize_facts(
     """Flatten a company-facts payload into rows for ``repo.upsert_facts``.
 
     Only mapped tags and periodic forms are kept. Rows missing required fields, or with
-    non-numeric values, are skipped. Duplicate natural keys are collapsed.
+    non-numeric values, are skipped. Duplicate natural keys with the same value are collapsed.
+
+    Duplicates with *different* values are ambiguous and are dropped: the payload carries no
+    share-class dimension, so a multi-class issuer (e.g. Berkshire A/B) can report one number
+    per class under the same tag, period and filing, and keeping whichever came last would
+    silently pick a class.
     """
     wanted_forms = set(forms)
     rows: dict[tuple, dict[str, Any]] = {}
+    ambiguous: set[tuple] = set()
     for taxonomy, tags in (payload.get("facts") or {}).items():
         for tag_name, body in (tags or {}).items():
             full_tag = f"{taxonomy}/{tag_name}"
@@ -150,6 +159,8 @@ def normalize_facts(
                     if not value.is_finite():
                         continue
                     key = (full_tag, unit, start, end, accession)
+                    if key in rows and rows[key]["value"] != value:
+                        ambiguous.add(key)
                     rows[key] = {
                         "concept": concept,
                         "tag": full_tag,
@@ -164,4 +175,8 @@ def normalize_facts(
                         "accession": accession,
                         "value": value,
                     }
+    if ambiguous:
+        log.warning("dropped %d facts with conflicting values for the same key", len(ambiguous))
+        for key in ambiguous:
+            rows.pop(key, None)
     return list(rows.values())

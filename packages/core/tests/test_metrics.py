@@ -194,27 +194,6 @@ def test_quarterly_and_partial_year_figures_are_ignored(db):
     assert m.eps == 2.5 and len(m.annual["EpsDiluted"]) == 12
 
 
-def test_share_count_comes_from_the_latest_report_of_any_periodic_form(db):
-    with session_scope(db) as s:
-        sid = repo.get_security(s, "ACME").id
-        repo.upsert_facts(
-            s,
-            sid,
-            [
-                fact(
-                    "SharesOutstanding",
-                    125,
-                    date(2025, 4, 30),
-                    unit="shares",
-                    instant=True,
-                    form="10-Q",
-                    filed=date(2025, 5, 5),
-                )
-            ],
-        )
-    assert metrics(db, as_of=date(2025, 6, 1)).book_value_per_share == pytest.approx(8.0)
-
-
 def test_tag_priority_keeps_the_series_continuous_across_tag_changes():
     old, new = CONCEPT_TAGS["Revenue"][2], CONCEPT_TAGS["Revenue"][0]
 
@@ -364,3 +343,180 @@ def test_score_security_runs_the_graph_on_database_metrics(db):
     assert graham.score == pytest.approx(100 * 4 / 7, abs=0.1)
     assert out["metrics"].warnings == []
     assert out["signal"] is None  # 57 is below the buy threshold
+
+
+# --- PR #12 review: ratios must be internally consistent ------------------------------------
+
+
+def add_company(engine, ticker, facts, price=25.0):
+    with session_scope(engine) as s:
+        repo.upsert_securities(s, [{"ticker": ticker}])
+        sid = repo.get_security(s, ticker).id
+        repo.upsert_facts(s, sid, facts)
+        if price is not None:
+            repo.upsert_prices(
+                s,
+                sid,
+                [
+                    dict(
+                        ts=datetime(2025, 3, 3, 21, tzinfo=UTC),
+                        open=price,
+                        high=price,
+                        low=price,
+                        close=price,
+                        volume=1,
+                    )
+                ],
+            )
+
+
+FY24, FY23 = date(2024, 12, 31), date(2023, 12, 31)
+COVER24 = date(2025, 1, 31)
+
+
+def cover(shares, when=COVER24, form="10-K", filed=date(2025, 2, 15)):
+    return fact(
+        "SharesOutstanding", shares, when, unit="shares", instant=True, form=form, filed=filed
+    )
+
+
+def test_book_value_pairs_with_the_same_reports_cover_not_a_later_10q(db):
+    with session_scope(db) as s:
+        repo.upsert_facts(
+            s,
+            repo.get_security(s, "ACME").id,
+            [cover(125, date(2025, 4, 30), form="10-Q", filed=date(2025, 5, 5))],
+        )
+    m = metrics(db, as_of=date(2025, 6, 1))
+    assert m.book_value_per_share == pytest.approx(10.0)  # 1000 / 100 (10-K cover), not / 125
+    assert not any("share count" in w for w in m.warnings)  # (the old price is stale, rightly)
+
+
+def test_share_count_far_from_the_balance_sheet_is_used_but_flagged(raw_engine):
+    add_company(
+        raw_engine,
+        "FAR",
+        [
+            fact("StockholdersEquity", 1000, FY24, instant=True),
+            fact("Assets", 2000, FY24, instant=True),
+            cover(100, date(2026, 1, 31), filed=date(2026, 2, 15)),
+        ],
+    )
+    m = metrics(raw_engine, as_of=date(2026, 3, 1), ticker="FAR")
+    assert m.book_value_per_share == pytest.approx(10.0)
+    assert any("does not match the balance sheet" in w for w in m.warnings)
+
+
+def test_repaid_debt_is_zero_not_a_stale_old_value(raw_engine):
+    add_company(
+        raw_engine,
+        "REPAID",
+        [
+            fact("StockholdersEquity", 1000, FY24, instant=True),
+            fact("Assets", 2000, FY24, instant=True),
+            fact("StockholdersEquity", 900, FY23, instant=True),
+            fact("LongTermDebt", 400, FY23, instant=True),  # not reported for 2024: it was repaid
+        ],
+    )
+    m = metrics(raw_engine, ticker="REPAID")
+    assert m.debt_to_equity == 0.0  # previously 400 / 1000 = 0.4, mixing years
+    assert any("no long-term debt reported for fiscal year 2024" in w for w in m.warnings)
+
+
+def test_missing_debt_without_a_balance_sheet_stays_unknown(raw_engine):
+    add_company(raw_engine, "THIN", [fact("StockholdersEquity", 1000, FY24, instant=True)])
+    assert metrics(raw_engine, ticker="THIN").debt_to_equity is None
+
+
+def test_roe_uses_a_common_fiscal_year_and_says_when_it_lags(raw_engine):
+    add_company(
+        raw_engine,
+        "LAG",
+        [
+            fact("StockholdersEquity", 1000, FY24, instant=True),
+            fact("StockholdersEquity", 800, FY23, instant=True),
+            fact("NetIncome", 200, FY23),  # no 2024 net income
+        ],
+    )
+    m = metrics(raw_engine, ticker="LAG")
+    assert m.roe == pytest.approx(200 / 800)  # not 200 / 1000
+    assert any(w.startswith("return on equity uses fiscal year 2023") for w in m.warnings)
+
+
+def test_no_dividend_data_means_zero_years_with_a_warning(raw_engine):
+    add_company(raw_engine, "NODIV", [fact("Assets", 2000, FY24, instant=True)])
+    m = metrics(raw_engine, ticker="NODIV")
+    assert m.dividend_years == 0
+    assert any("treated as 0 years" in w for w in m.warnings)
+    assert not any("treated as 0 years" in b for b in m.signal_blockers)  # informational only
+
+
+def test_a_dividend_series_that_stopped_has_no_current_streak(raw_engine):
+    add_company(
+        raw_engine,
+        "STOPPED",
+        [
+            fact("Assets", 2000, FY24, instant=True),
+            fact("DividendsPerShare", 1.0, date(2021, 12, 31), unit="USD/shares"),
+            fact("DividendsPerShare", 1.0, date(2022, 12, 31), unit="USD/shares"),
+        ],
+    )
+    m = metrics(raw_engine, ticker="STOPPED")
+    assert m.dividend_years == 0
+    assert any("streak treated as ended" in w for w in m.warnings)
+
+
+def test_graham_pe_uses_three_year_average_earnings(db):
+    m = metrics(db)
+    assert m.pe_avg3 == pytest.approx(25 / ((2.0 + 2.2 + 2.5) / 3))
+    assert m.pe == 10.0  # latest-year P/E is still reported separately
+
+
+def test_pe_avg3_needs_three_consecutive_fiscal_years(raw_engine):
+    add_company(
+        raw_engine,
+        "GAPPY",
+        [
+            fact("EpsDiluted", 1.0, date(2020, 12, 31), unit="USD/shares"),
+            fact("EpsDiluted", 2.0, date(2023, 12, 31), unit="USD/shares"),
+            fact("EpsDiluted", 3.0, FY24, unit="USD/shares"),
+        ],
+    )
+    assert metrics(raw_engine, ticker="GAPPY").pe_avg3 is None
+
+
+def test_multi_class_issuers_do_not_report_book_value(raw_engine):
+    add_company(
+        raw_engine,
+        "BRK-B",
+        [
+            fact("StockholdersEquity", 1000, FY24, instant=True),
+            fact("Assets", 2000, FY24, instant=True),
+            cover(100),
+        ],
+    )
+    m = metrics(raw_engine, ticker="BRK-B")
+    assert m.pb is None and m.book_value_per_share is None
+    assert any("multiple share classes" in w for w in m.warnings)
+
+
+def test_earnings_growth_window_is_calendar_years_not_a_count_of_points():
+    d = lambda y: date(y, 12, 31)  # noqa: E731
+    old = [(d(2008), 1.0), (d(2009), 1.0), (d(2010), 1.0)]  # more than 10 years before 2021
+    recent = [(d(y), 2.0) for y in (2018, 2019, 2020, 2021)]
+    # by point count this would be 7 values (growth 1.0); by calendar only 4 fall in the window
+    assert earnings_growth(old + recent) is None
+    dense = [(d(y), 1.0) for y in range(2012, 2018)] + [(d(y), 2.0) for y in range(2018, 2022)]
+    assert earnings_growth(dense) == pytest.approx(1.0)  # 2012-2021 are all within ~10 years
+
+
+def test_missing_or_stale_data_are_signal_blockers_other_warnings_are_not(db):
+    empty = metrics(db, ticker="EMPTY")
+    assert set(empty.signal_blockers) == {
+        "no price on or before as_of",
+        "no annual fundamentals available as of this date",
+    }
+    stale = metrics(db, as_of=date(2026, 12, 1))
+    assert any(b.startswith("price is stale") for b in stale.signal_blockers)
+    assert any(b.startswith("fundamentals are stale") for b in stale.signal_blockers)
+    assert metrics(db).signal_blockers == []

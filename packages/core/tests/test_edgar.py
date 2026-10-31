@@ -127,3 +127,38 @@ def test_normalize_collapses_exact_duplicates(fixture_json):
     entries.append(dict(entries[0]))
     assets = [r for r in normalize_facts(payload) if r["tag"] == "us-gaap/Assets"]
     assert len(assets) == 1
+
+
+def test_conflicting_values_for_the_same_key_are_dropped_not_overwritten():
+    """A multi-class issuer can report one number per class under the same tag/period/filing;
+    the payload has no class dimension, so keeping the last one would silently pick a class."""
+    entry = lambda val, accn="0001-25-000001": {  # noqa: E731
+        "end": "2024-12-31",
+        "start": "2024-01-01",
+        "val": val,
+        "accn": accn,
+        "fy": 2024,
+        "fp": "FY",
+        "form": "10-K",
+        "filed": "2025-02-15",
+    }
+    payload = {
+        "facts": {
+            "us-gaap": {
+                "EarningsPerShareDiluted": {
+                    "units": {"USD/shares": [entry(5.0), entry(0.003)]}
+                },  # A vs B
+                "Revenues": {
+                    "units": {"USD": [entry(100), entry(100)]}
+                },  # exact duplicate: kept once
+                "NetIncomeLoss": {
+                    "units": {"USD": [entry(7, "a-1"), entry(8, "a-2")]}
+                },  # distinct filings
+            }
+        }
+    }
+    rows = normalize_facts(payload)
+    tags = [r["tag"] for r in rows]
+    assert "us-gaap/EarningsPerShareDiluted" not in tags  # ambiguous: dropped entirely
+    assert tags.count("us-gaap/Revenues") == 1
+    assert tags.count("us-gaap/NetIncomeLoss") == 2  # different accessions are not a conflict

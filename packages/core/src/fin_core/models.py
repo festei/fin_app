@@ -55,7 +55,8 @@ class SecurityMetrics(BaseModel):
     as_of: datetime
     price: float | None = None
     price_date: date | None = None
-    pe: float | None = None
+    pe: float | None = None  # price / latest fiscal-year diluted EPS
+    pe_avg3: float | None = None  # price / average of the latest 3 fiscal years (Graham's P/E)
     pb: float | None = None
     current_ratio: float | None = None
     debt_to_equity: float | None = None
@@ -67,6 +68,9 @@ class SecurityMetrics(BaseModel):
     latest_fiscal_year_end: date | None = None
     annual: dict[str, list[AnnualPoint]] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)  # data-quality notes, never silent gaps
+    # Subset of the warnings that make the data too poor to emit a buy/sell signal on
+    # (no or stale price/fundamentals). The graph's decide node withholds signals while set.
+    signal_blockers: list[str] = Field(default_factory=list)
 
 
 SignalKind = Literal["buy", "sell", "watch", "emerging"]

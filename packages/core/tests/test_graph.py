@@ -99,3 +99,38 @@ def test_graph_sell_when_score_collapses():
     )
     out = run(bad, previous=90.0)
     assert out["signal"].kind == "sell"
+
+
+def test_graham_pe_uses_the_three_year_average_when_available():
+    # latest-year P/E 20 would fail the limit of 15; the 3-year average 10 passes
+    r = score_graham(metrics(pe=20.0, pe_avg3=10.0), CFG["graham"])
+    pe = next(c for c in r.criteria if c.name == "P/E below limit")
+    assert pe.passed and pe.actual == 10.0 and "3-year average" in pe.detail
+
+
+def test_graham_pe_falls_back_to_latest_year_and_says_so():
+    r = score_graham(metrics(pe=10.0, pe_avg3=None), CFG["graham"])
+    pe = next(c for c in r.criteria if c.name == "P/E below limit")
+    assert pe.passed and "latest-year EPS" in pe.detail
+
+
+def test_signal_is_withheld_while_the_data_is_too_poor_to_act_on():
+    stale = metrics(signal_blockers=["price is stale: last bar 2024-01-02"])
+    out = run(stale)
+    assert out["conviction"] == 100.0  # the score itself is still reported
+    assert out["signal"] is None
+    assert "Signal withheld: price is stale" in out["explanation"]
+    assert run(metrics())["signal"].kind == "emerging"  # same metrics without blockers
+
+
+def test_sell_signal_is_also_withheld_on_stale_data():
+    bad = metrics(
+        pe=40,
+        pb=5,
+        current_ratio=0.5,
+        debt_to_equity=3,
+        dividend_years=0,
+        earnings_growth=-0.2,
+        signal_blockers=["no price on or before as_of"],
+    )
+    assert run(bad, previous=90.0)["signal"] is None
