@@ -1,0 +1,4 @@
+:root { color-scheme: dark; }
+body { margin: 0; background: #0e1117; color: #e6e9ef; font: 14px/1.5 system-ui, sans-serif; }
+.shell { max-width: 960px; margin: 0 auto; padding: 24px 16px; }
+.muted { color: #8b93a3; }

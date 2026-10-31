@@ -1,0 +1,5 @@
+# Feature flags. Each can be overridden by an env var FEATURE_<NAME> (e.g. FEATURE_TELEGRAM_ENABLED=true).
+features:
+  # Telegram alert channel and bot. Built in phase 3, disabled by default.
+  # When true, TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are required.
+  telegram_enabled: false

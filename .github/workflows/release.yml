@@ -1,0 +1,35 @@
+name: Release (Commitizen version bump)
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  commitizen:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Install Commitizen
+      run: pip3 install -U Commitizen==3.20.0
+
+    - name: Create and push new branch
+      run: |
+        git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git config --global user.name "github-actions[bot]"
+
+        git pull origin main
+        git checkout main
+        git fetch --tags
+
+        cz -nr 21 bump --yes
+
+        git branch --set-upstream-to=origin/main main
+        git push origin main:$GITHUB_REF
+        
+        TAG=$(git describe --tags $(git rev-list --tags --max-count=1))
+        echo "export TAG='$TAG'" >> variables
+        git push origin $TAG

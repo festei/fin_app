@@ -1,22 +1,19 @@
-[tool.kedro]
-package_name = "fin_app_backend"
-project_name = "fin_app_backend"
-project_version = "0.17.6"
+[project]
+name = "fin-api"
+version = "0.1.0"
+description = "FastAPI service: REST + WebSocket for the trading UI"
+requires-python = ">=3.12"
+dependencies = [
+    "fin-core",
+    # Capped: Prefect 3.8's server code (shared workspace env) breaks on newer FastAPI
+    # (Body(min_items=...) was removed). Verified working up to 0.136.1; revisit on Prefect upgrade.
+    "fastapi>=0.111,<0.137",
+    "uvicorn[standard]>=0.30",
+]
 
-[tool.isort]
-multi_line_output = 3
-include_trailing_comma = true
-force_grid_wrap = 0
-use_parentheses = true
-line_length = 88
-known_third_party = "kedro"
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-[tool.pytest.ini_options]
-addopts = """
---cov-report term-missing \
---cov src/fin_app_backend -ra"""
-
-[tool.coverage.report]
-fail_under = 0
-show_missing = true
-exclude_lines = ["pragma: no cover", "raise NotImplementedError"]
+[tool.hatch.build.targets.wheel]
+packages = ["src/fin_api"]
