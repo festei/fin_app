@@ -1,0 +1,57 @@
+# Here you can define all your data sets by using simple YAML syntax.
+#
+# Documentation for this file format can be found in "The Data Catalog"
+# Link: https://kedro.readthedocs.io/en/stable/05_data/01_data_catalog.html
+
+
+yahoo_data:
+  type: pandas.ParquetDataSet
+  filepath: data/01_raw/stock_data.parquet
+
+raw_income_statement:
+  type: api.APIDataSet
+  url: https://www.alphavantage.co/query
+  params:
+    apikey: ${FINANCE_API}
+    function: INCOME_STATEMENT
+    symbol: IBM
+
+raw_balance_statement:
+  type: api.APIDataSet
+  url: https://www.alphavantage.co/query
+  params:
+    apikey: ${FINANCE_API}
+    function: BALANCE_SHEET
+    symbol: IBM
+
+raw_cashflow_statement:
+  type: api.APIDataSet
+  url: https://www.alphavantage.co/query
+  params:
+    apikey: ${FINANCE_API}
+    function: CASH_FLOW
+    symbol: IBM
+
+
+intermediate_income_annual:
+  type: pandas.ParquetDataSet
+  filepath: data/02_indermediate/income.parquet
+
+intermediate_cashflow_annual:
+  type: pandas.ParquetDataSet
+  filepath: data/02_indermediate/cashflow.parquet
+
+intermediate_balance_annual:
+  type: pandas.ParquetDataSet
+  filepath: data/02_indermediate/balance.parquet
+
+
+final_income_annual:
+  type: pandas.SQLTableDataSet
+  credentials: db_creds
+  table_name: income_annual
+  load_args:
+    schema: fundamentals
+  save_args:
+    schema: fundamentals
+    if_exists: append

@@ -1,0 +1,4 @@
+artifact_location: file:///Users/felixsteinle/Documents/repositories/fin_app_backend/mlruns/1
+experiment_id: '1'
+lifecycle_stage: active
+name: fin_app_backend
