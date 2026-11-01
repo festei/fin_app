@@ -87,3 +87,7 @@ Scoring runs as the last step of the daily pipeline (`score-universe` flow, or `
 
 `config/features.yml` holds defaults; env `FEATURE_<NAME>` overrides. `telegram_enabled` is off by
 default: when off, no Telegram channel is registered and no token is needed.
+
+## Paper-trading sandbox
+
+Simulate what a small portfolio (say $100) would have done. `manual` portfolios take orders through `POST /api/portfolios/{id}/orders`; `strategy` portfolios buy on buy/emerging signals and sell on sell signals (`config/sandbox.yml`). Orders fill at the first daily close **after** the day they were placed (no look-ahead), at adjusted prices, and the daily `sandbox-step` (last step of the pipeline) fills them and records the equity curve (`GET /api/portfolios/{id}/history`). Creating portfolios and orders needs the API token. Simulation only, not investment advice.

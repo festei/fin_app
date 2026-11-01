@@ -241,3 +241,81 @@ class ChannelState(Base):
     # Telegram update offset: the next update to fetch, persisted so a restart never replays
     # commands that were already handled.
     update_cursor: Mapped[int | None] = mapped_column(BigInteger)
+
+
+class Portfolio(Base):
+    """A paper-trading portfolio (the sandbox). ``manual`` takes orders from the user,
+    ``strategy`` trades from signals. Amounts are Decimals; quantities may be fractional."""
+
+    __tablename__ = "portfolios"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    mode: Mapped[str] = mapped_column(String(16), nullable=False)  # manual | strategy
+    initial_cash: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    cash: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    fee_bps: Mapped[Decimal] = mapped_column(Numeric(8, 2), nullable=False, default=0)
+    strategy_config: Mapped[dict | None] = mapped_column(JsonType)
+    # strategy portfolios only act on signals created after this id (never on history)
+    last_signal_id: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class SandboxOrder(Base):
+    """An order, decided at ``created_at`` and filled at the first daily close of a later day.
+
+    Buy: exactly one of ``quantity`` / ``notional``. Sell: ``quantity``, ``notional`` or neither
+    (= close the whole position).
+    """
+
+    __tablename__ = "sandbox_orders"
+    __table_args__ = (Index("ix_sandbox_orders_portfolio_status", "portfolio_id", "status"),)
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
+    portfolio_id: Mapped[int] = mapped_column(
+        ForeignKey("portfolios.id", ondelete="CASCADE"), nullable=False
+    )
+    security_id: Mapped[int] = mapped_column(
+        ForeignKey("securities.id", ondelete="CASCADE"), nullable=False
+    )
+    side: Mapped[str] = mapped_column(String(8), nullable=False)  # buy | sell
+    quantity: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
+    notional: Mapped[Decimal | None] = mapped_column(Numeric(18, 4))
+    status: Mapped[str] = mapped_column(String(12), nullable=False, default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # the signal that caused a strategy order (links a trade to its score, for later attribution)
+    signal_id: Mapped[int | None] = mapped_column(BigInteger)
+    filled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    fill_quantity: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
+    fill_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
+    fee: Mapped[Decimal | None] = mapped_column(Numeric(18, 4))
+    reason: Mapped[str | None] = mapped_column(String(200))  # why rejected / cancelled
+
+
+class SandboxPosition(Base):
+    __tablename__ = "sandbox_positions"
+
+    portfolio_id: Mapped[int] = mapped_column(
+        ForeignKey("portfolios.id", ondelete="CASCADE"), primary_key=True
+    )
+    security_id: Mapped[int] = mapped_column(
+        ForeignKey("securities.id", ondelete="CASCADE"), primary_key=True
+    )
+    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    avg_cost: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+
+
+class PortfolioSnapshot(Base):
+    """One row per portfolio and day: the equity curve."""
+
+    __tablename__ = "portfolio_snapshots"
+
+    portfolio_id: Mapped[int] = mapped_column(
+        ForeignKey("portfolios.id", ondelete="CASCADE"), primary_key=True
+    )
+    as_of: Mapped[date] = mapped_column(Date, primary_key=True)
+    cash: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    positions_value: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    total_value: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)

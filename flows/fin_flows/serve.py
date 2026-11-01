@@ -1,8 +1,8 @@
 """Serve every flow: ``python -m fin_flows.serve`` (needs ``PREFECT_API_URL``).
 
 One scheduled deployment, the chained daily pipeline (weekdays, after the US close, UTC):
-ingestion first, scoring last. Each step is also deployed without a schedule so it can be
-triggered by hand from the Prefect UI.
+ingestion, then scoring, then the sandbox. Each step is also deployed without a schedule so it
+can be triggered by hand from the Prefect UI.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from fin_flows.ingestion import (
     sync_universe_flow,
 )
 from fin_flows.pipeline import daily_pipeline_flow
+from fin_flows.sandbox import sandbox_step_flow
 from fin_flows.scoring import score_universe_flow
 
 SCHEDULED = [(daily_pipeline_flow, "30 21 * * 1-5")]
@@ -25,6 +26,7 @@ MANUAL = [
     ingest_yields_flow,
     ingest_fundamentals_flow,
     score_universe_flow,
+    sandbox_step_flow,
 ]
 
 
