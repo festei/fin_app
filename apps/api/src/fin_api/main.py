@@ -13,7 +13,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import Engine, select, text
+from sqlalchemy import Engine, or_, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -23,8 +23,11 @@ from fin_core.db import repo, signals_repo
 from fin_core.db.models import (
     Portfolio,
     PortfolioSnapshot,
+    PriceBar,
     SandboxOrder,
+    ScoreRecord,
     Security,
+    SignalRecord,
 )
 from fin_core.db.session import database_configured, database_url, make_engine, session_scope
 from fin_core.features import FeatureFlags
@@ -372,6 +375,155 @@ def channels() -> list[dict[str, object]]:
             "muted_until": muted.get("telegram"),
         },
     ]
+
+
+# --- securities: search, price history, score history ---------------------------------------------
+
+
+class SecurityOut(BaseModel):
+    ticker: str
+    name: str | None
+    sector: str | None
+    kind: str  # stock | etf
+    watched: bool
+
+
+class BarOut(BaseModel):
+    ts: str
+    open: float | None
+    high: float | None
+    low: float | None
+    close: float
+    volume: int | None
+
+
+class ScorePoint(BaseModel):
+    computed_at: str | None
+    as_of: str
+    conviction: float | None  # None = nothing could be evaluated (not a score of 0)
+    signal_blocked: bool  # computed on stale or missing data; no signal was possible
+    all_abstained: bool
+
+
+class SignalPoint(BaseModel):
+    kind: str
+    conviction: float
+    as_of: str
+
+
+class ScoreHistory(BaseModel):
+    scores: list[ScorePoint]
+    signals: list[SignalPoint]  # transitions, for chart markers
+
+
+def _security(s: Session, ticker: str) -> Security:
+    sec = repo.get_security(s, ticker)
+    if sec is None:
+        raise HTTPException(404, detail=f"unknown ticker {ticker.upper()}")
+    return sec
+
+
+@app.get("/api/securities", response_model=list[SecurityOut])
+def list_securities(
+    q: str | None = Query(None, max_length=50),
+    sector: str | None = Query(None, max_length=100),
+    kind: str | None = Query(None, max_length=16),
+    limit: int = Query(50, ge=1, le=500),
+) -> list[SecurityOut]:
+    """Search the universe by ticker prefix or name fragment, optionally by sector or kind."""
+    with _db() as s:
+        query = select(Security).where(Security.active.is_(True))
+        if q:
+            like = q.strip().replace("%", "").replace("_", "")
+            query = query.where(
+                or_(Security.ticker.ilike(f"{like}%"), Security.name.ilike(f"%{like}%"))
+            )
+        if sector:
+            query = query.where(Security.sector == sector)
+        if kind:
+            query = query.where(Security.kind == kind)
+        rows = s.scalars(query.order_by(Security.ticker).limit(limit)).all()
+        watched = set(signals_repo.watchlist_tickers(s))
+        return [
+            SecurityOut(
+                ticker=r.ticker,
+                name=r.name,
+                sector=r.sector,
+                kind=r.kind,
+                watched=r.ticker in watched,
+            )
+            for r in rows
+        ]
+
+
+@app.get("/api/securities/{ticker}/prices", response_model=list[BarOut])
+def security_prices(
+    ticker: str,
+    days: int = Query(365, ge=1, le=20000),
+    max_points: int = Query(1000, ge=10, le=5000),
+) -> list[BarOut]:
+    """Daily bars for the last ``days`` days, oldest first, thinned to at most ``max_points``
+    (every n-th bar, always keeping the newest). Stored prices are split/dividend-adjusted."""
+    since = datetime.now(UTC) - timedelta(days=days)
+    with _db() as s:
+        sec = _security(s, ticker)
+        bars = s.scalars(
+            select(PriceBar)
+            .where(PriceBar.security_id == sec.id, PriceBar.ts >= since)
+            .order_by(PriceBar.ts)
+        ).all()
+    if len(bars) > max_points:
+        step = -(-len(bars) // max_points)  # ceiling
+        bars = bars[::-1][::step][::-1]  # counted from the newest so it is always included
+    return [
+        BarOut(
+            ts=b.ts.isoformat(),
+            open=b.open,
+            high=b.high,
+            low=b.low,
+            close=b.close,
+            volume=b.volume,
+        )
+        for b in bars
+    ]
+
+
+@app.get("/api/securities/{ticker}/scores", response_model=ScoreHistory)
+def security_scores(
+    ticker: str, days: int = Query(365, ge=1, le=20000), limit: int = Query(1000, ge=1, le=5000)
+) -> ScoreHistory:
+    """Stored scores (oldest first) and the signals they produced, for the conviction chart.
+    Blocked and all-abstained runs are included but flagged, so a gap is visible as a gap."""
+    since = datetime.now(UTC) - timedelta(days=days)
+    with _db() as s:
+        sec = _security(s, ticker)
+        scores = s.scalars(
+            select(ScoreRecord)
+            .where(ScoreRecord.security_id == sec.id, ScoreRecord.computed_at >= since)
+            .order_by(ScoreRecord.computed_at.desc(), ScoreRecord.id.desc())
+            .limit(limit)
+        ).all()[::-1]
+        signals = s.scalars(
+            select(SignalRecord)
+            .where(SignalRecord.security_id == sec.id, SignalRecord.as_of >= since)
+            .order_by(SignalRecord.id)
+        ).all()
+        return ScoreHistory(
+            scores=[
+                ScorePoint(
+                    computed_at=_iso(r.computed_at),
+                    as_of=r.as_of.isoformat(),
+                    conviction=r.conviction,
+                    signal_blocked=r.signal_blocked,
+                    all_abstained=r.all_abstained,
+                )
+                for r in scores
+            ],
+            signals=[
+                SignalPoint(kind=x.kind, conviction=x.conviction, as_of=x.as_of.isoformat())
+                for x in signals
+            ],
+        )
 
 
 # --- paper-trading sandbox ---------------------------------------------------------------------
