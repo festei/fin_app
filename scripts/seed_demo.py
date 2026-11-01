@@ -7,7 +7,10 @@ and portfolios are what the app would produce, not hand-drawn fixtures.
     uv run python scripts/seed_demo.py sqlite:///demo.db
     DATABASE_URL=sqlite:///demo.db API_TOKEN=dev-token uv run uvicorn fin_api.main:app
 
-Never point this at a real database: it creates securities, scores, alerts and portfolios.
+Never point this at a real database: it creates securities, scores, alerts and portfolios. It
+therefore refuses anything but a SQLite URL, and any database that already holds securities,
+unless you pass --force. The dates are relative to today (the last scored week is the most recent
+Friday), so re-seed when the demo gets old; the Opportunities list hides scores older than 10 days.
 """
 
 from __future__ import annotations
@@ -26,9 +29,8 @@ from fin_core.sandbox.config import SandboxConfig
 from fin_core.sandbox.run import run_sandbox
 from fin_core.scoring_run import run_scoring
 
-EPS = [1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 2.0, 2.2, 2.5]  # FY2014-FY2025
-DPS = [0.5, 0.5, 0.5, 0.6, 0.6, 0.0, 0.7, 0.7, 0.8, 0.8, 0.9, 1.0]
-YEARS = list(range(2014, 2026))
+EPS = [1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 2.0, 2.2, 2.5, 2.7]  # oldest first
+DPS = [0.5, 0.5, 0.5, 0.6, 0.6, 0.0, 0.7, 0.7, 0.8, 0.8, 0.9, 1.0, 1.0]
 
 # ticker, name, sector, scale k (fundamentals and price level), price path anchors
 # (week 0 = first scored week, price as a multiple of "12 / 25 / 100" style levels: cheap=12,
@@ -42,7 +44,18 @@ COMPANIES = [
     ("FLUX", "Flux Materials", "Materials", 0.6, [(0, 12), (34, 25)]),
 ]
 WEEKS = 35
-START = date(2026, 3, 6)  # a Friday
+
+
+def last_friday(today: date) -> date:
+    return today - timedelta(days=(today.weekday() - 4) % 7)
+
+
+TODAY = datetime.now(UTC).date()
+START = last_friday(TODAY) - timedelta(weeks=WEEKS - 1)  # the last scored week is the latest Friday
+# latest fiscal year whose 10-K (filed mid February) is public by START; the demo's history then
+# also sees the following year's report arrive during the run
+LATEST_FY = START.year - 1 if START >= date(START.year, 3, 1) else START.year - 2
+YEARS = list(range(LATEST_FY - 11, LATEST_FY + 2))  # 12 years of EPS history at START, plus 1
 
 
 def fact(concept, value, end, *, unit="USD", instant=False, filed=None):
@@ -62,7 +75,7 @@ def facts_for(k: float) -> list[dict]:
         end = date(year, 12, 31)
         rows += [fact("EpsDiluted", eps * k, end, unit="USD/shares"),
                  fact("DividendsPerShare", dps * k, end, unit="USD/shares")]  # fmt: skip
-    for year in (2024, 2025):
+    for year in (LATEST_FY - 1, LATEST_FY, LATEST_FY + 1):
         end = date(year, 12, 31)
         rows += [
             fact("StockholdersEquity", 1000 * k, end, instant=True),
@@ -111,7 +124,23 @@ def bars(prices):
     return out
 
 
-def seed(url: str) -> None:
+def check_safe(url: str, force: bool) -> None:
+    if force:
+        return
+    if not url.startswith("sqlite"):
+        sys.exit(f"refusing to seed a non-SQLite database ({url.split(':')[0]}); use --force")
+    engine = make_engine(url)
+    try:
+        migrate.upgrade(url)
+        with session_scope(engine) as s:
+            if repo.list_securities(s, active_only=False):
+                sys.exit("refusing to seed a database that already has securities; use --force")
+    finally:
+        engine.dispose()
+
+
+def seed(url: str, force: bool = False) -> None:
+    check_safe(url, force)
     migrate.upgrade(url)
     engine = make_engine(url)
     rng = random.Random(42)
@@ -155,6 +184,7 @@ def seed(url: str) -> None:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
+    args = [a for a in sys.argv[1:] if a != "--force"]
+    if len(args) != 1:
         sys.exit(__doc__)
-    seed(sys.argv[1])
+    seed(args[0], force="--force" in sys.argv[1:])

@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
-import { useSearch } from "../api/hooks";
+import { useDebounced, useSearch } from "../api/hooks";
 
 function SearchBox() {
   const [q, setQ] = useState("");
   const navigate = useNavigate();
-  const results = useSearch(q.trim());
+  const results = useSearch(useDebounced(q.trim()));
   const open = q.trim().length > 0;
 
   const go = (ticker: string) => {

@@ -44,7 +44,7 @@ export const fail = (status: number, detail: unknown) =>
 
 export function renderApp(path = "/") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  return render(
+  const view = render(
     <QueryClientProvider client={client}>
       <MemoryRouter
         initialEntries={[path]}
@@ -54,6 +54,7 @@ export function renderApp(path = "/") {
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return { ...view, client };
 }
 
 export const opportunity = (ticker: string, conviction: number, extra = {}) => ({

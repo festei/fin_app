@@ -4,13 +4,6 @@ import { useAlerts, useMarkRead } from "../api/hooks";
 import { Empty, ErrorBox, Loading } from "../components/Status";
 import { age } from "../lib/format";
 
-/** The alert text is shared with Telegram, whose last line points at a bot command. */
-export const inAppBody = (body: string): string =>
-  body
-    .split("\n")
-    .filter((line) => !line.startsWith("Use /why"))
-    .join("\n");
-
 export function Alerts() {
   const [unreadOnly, setUnreadOnly] = useState(false);
   const alerts = useAlerts(unreadOnly);
@@ -56,7 +49,7 @@ export function Alerts() {
               )}
             </div>
             <strong>{a.title}</strong>
-            <pre className="alert-body">{inAppBody(a.body)}</pre>
+            <pre className="alert-body">{a.body}</pre>
             <div className="muted small">
               {Object.entries(a.deliveries)
                 .map(([channel, status]) => `${channel}: ${status}`)

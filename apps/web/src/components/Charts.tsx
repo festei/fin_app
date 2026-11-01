@@ -17,6 +17,11 @@ const COLORS = {
   area: "rgba(88,166,255,0.12)",
 };
 
+// Module-level so the defaults keep one identity: a new [] per render would be a changed
+// dependency and rebuild the chart (losing zoom, flickering) on every re-render.
+const NO_MARKERS: Marker[] = [];
+const NO_LINES: { value: number; title: string }[] = [];
+
 function useChart(height: number, build: (chart: IChartApi) => void, deps: unknown[]) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -35,10 +40,11 @@ function useChart(height: number, build: (chart: IChartApi) => void, deps: unkno
     });
     build(chart);
     chart.timeScale().fitContent();
-    const resize = () => chart.applyOptions({ width: el.clientWidth });
-    window.addEventListener("resize", resize);
+    // follows the container, not just the window (sidebars, layout changes)
+    const observer = new ResizeObserver(() => chart.applyOptions({ width: el.clientWidth }));
+    observer.observe(el);
     return () => {
-      window.removeEventListener("resize", resize);
+      observer.disconnect();
       chart.remove();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -79,7 +85,7 @@ export function PriceChart({ bars }: { bars: Bar[] }) {
 
 export interface Point {
   time: string; // ISO date or timestamp
-  value: number;
+  value: number | null; // null = no data that day: drawn as a gap, not a line across it
 }
 
 export interface Marker {
@@ -92,8 +98,8 @@ export interface Marker {
  *  horizontal reference lines (for example the buy and sell lines). */
 export function LineChart({
   points,
-  markers = [],
-  lines = [],
+  markers = NO_MARKERS,
+  lines = NO_LINES,
   range,
   height = 220,
 }: {
@@ -117,9 +123,12 @@ export function LineChart({
           }),
         }),
       });
-      const byDay = new Map<string, number>();
+      const byDay = new Map<string, number | null>();
       for (const p of points) byDay.set(p.time.slice(0, 10), p.value);
-      series.setData([...byDay.entries()].map(([d, v]) => ({ time: d as Time, value: v })));
+      // a point without a value is a whitespace point: the series breaks there
+      series.setData(
+        [...byDay.entries()].map(([d, v]) => (v == null ? { time: d as Time } : { time: d as Time, value: v })),
+      );
       for (const l of lines) {
         series.createPriceLine({
           price: l.value,

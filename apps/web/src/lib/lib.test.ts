@@ -37,6 +37,7 @@ test("request never sends credentials and surfaces the backend's message", async
   const sent = spy.mock.calls[0][1]!.headers as Record<string, string>;
   expect(Object.keys(sent).map((k) => k.toLowerCase())).not.toContain("authorization");
   expect(sent["Content-Type"]).toBe("application/json");
+  expect(sent["X-Requested-With"]).toBe("fin-app"); // the proxy's CSRF guard needs it
   await expect(request("/api/x")).rejects.toMatchObject({ status: 404, detail: "unknown ticker ZZZ" });
   await expect(request("/api/x")).rejects.toThrow("bad a; bad b");
   const err = (await request("/api/x").catch((e: unknown) => e)) as ApiError;

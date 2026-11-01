@@ -1,4 +1,11 @@
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  type QueryClient,
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import { api } from "./client";
 import type { NewOrder, NewPortfolio } from "./types";
 
@@ -14,6 +21,16 @@ export const usePrices = (ticker: string, days: number) =>
   useQuery({ queryKey: ["prices", ticker, days], queryFn: () => api.prices(ticker, days) });
 export const useScoreHistory = (ticker: string) =>
   useQuery({ queryKey: ["scoreHistory", ticker], queryFn: () => api.scoreHistory(ticker) });
+
+/** `value`, but only after it has stopped changing for `ms` (keystrokes in a search box). */
+export function useDebounced<T>(value: T, ms = 250): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(value), ms);
+    return () => clearTimeout(id);
+  }, [value, ms]);
+  return debounced;
+}
 
 export const useSearch = (q: string) =>
   useQuery({
@@ -65,14 +82,18 @@ export function useCreatePortfolio() {
   });
 }
 
+/** An order changes the portfolio's detail, its order list and the overview card. */
+function refreshPortfolio(qc: QueryClient, portfolioId: number) {
+  qc.invalidateQueries({ queryKey: ["orders", portfolioId] });
+  qc.invalidateQueries({ queryKey: ["portfolio", portfolioId] });
+  qc.invalidateQueries({ queryKey: ["portfolios"] });
+}
+
 export function usePlaceOrder(portfolioId: number) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: NewOrder) => api.placeOrder(portfolioId, body),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["orders", portfolioId] });
-      qc.invalidateQueries({ queryKey: ["portfolio", portfolioId] });
-    },
+    onSuccess: () => refreshPortfolio(qc, portfolioId),
   });
 }
 
@@ -80,6 +101,6 @@ export function useCancelOrder(portfolioId: number) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (orderId: number) => api.cancelOrder(portfolioId, orderId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["orders", portfolioId] }),
+    onSuccess: () => refreshPortfolio(qc, portfolioId),
   });
 }

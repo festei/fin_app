@@ -20,6 +20,19 @@ test("the search box finds a security and opens its page", async () => {
   expect(await screen.findByText(/Unknown ticker ACME/)).toBeInTheDocument(); // navigated to /security/ACME
 });
 
+test("typing in the search box asks the API once, after a short pause", async () => {
+  const calls = mockApi({
+    "GET /api/securities": [],
+    "GET /api/opportunities": [],
+    "GET /api/watchlist": { tickers: [] },
+  });
+  renderApp("/");
+  await userEvent.type(screen.getByLabelText("Search securities"), "apple");
+  await screen.findByText("No match");
+  expect(calls.filter((c) => c.url.startsWith("/api/securities"))).toHaveLength(1);
+  expect(calls.find((c) => c.url.startsWith("/api/securities"))!.url).toContain("q=apple");
+});
+
 test("the navigation reaches every section", async () => {
   mockApi({
     "GET /api/opportunities": [], "GET /api/watchlist": { tickers: [] },

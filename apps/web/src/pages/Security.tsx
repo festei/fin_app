@@ -63,13 +63,17 @@ export function SecurityPage() {
   const prices = usePrices(ticker, range);
   const history = useScoreHistory(ticker);
 
+  // blocked (stale data) and all-abstained runs have no usable conviction: they become gaps
   const convictionPoints = useMemo(
     () =>
-      (history.data?.scores ?? [])
-        .filter((p) => p.conviction != null && !p.signal_blocked)
-        .map((p) => ({ time: p.as_of, value: p.conviction as number })),
+      (history.data?.scores ?? []).map((p) => ({
+        time: p.as_of,
+        value: p.conviction != null && !p.signal_blocked ? p.conviction : null,
+      })),
     [history.data],
   );
+  const hasConviction = convictionPoints.some((p) => p.value != null);
+  const lastSignal = history.data?.signals.at(-1);
   const markers = useMemo<Marker[]>(
     () =>
       (history.data?.signals ?? []).map((s) => ({
@@ -115,7 +119,9 @@ export function SecurityPage() {
         <section className="card">
           <div className="stat-row">
             <div>
-              <div className="muted small">Conviction</div>
+              <div className="muted small" title="Recomputed now from the latest data; the Opportunities list shows the last stored score">
+                Conviction (live)
+              </div>
               <div className="big">
                 <Conviction value={s.conviction} />
               </div>
@@ -132,9 +138,16 @@ export function SecurityPage() {
               </div>
             </div>
           </div>
+          {lastSignal && (
+            <p className={`banner tone-${lastSignal.kind === "sell" ? "bad" : "good"}`}>
+              Latest signal: <strong>{lastSignal.kind}</strong> at {lastSignal.conviction.toFixed(0)} on{" "}
+              {day(lastSignal.as_of)}
+            </p>
+          )}
           {s.signal && (
             <p className={`banner tone-${s.signal.kind === "sell" ? "bad" : "good"}`}>
-              Signal: <strong>{s.signal.kind}</strong> at {s.signal.conviction.toFixed(0)}
+              New since the last stored score: <strong>{s.signal.kind}</strong> at{" "}
+              {s.signal.conviction.toFixed(0)} (recorded by the next scheduled run)
             </p>
           )}
           {m.signal_blockers.length > 0 && (
@@ -174,10 +187,8 @@ export function SecurityPage() {
       <section className="card">
         <h2>Conviction history</h2>
         {history.isLoading && <Loading what="Loading history" />}
-        {convictionPoints.length === 0 && !history.isLoading && (
-          <Empty>No stored scores yet.</Empty>
-        )}
-        {convictionPoints.length > 0 && (
+        {!hasConviction && !history.isLoading && <Empty>No stored scores yet.</Empty>}
+        {hasConviction && (
           <LineChart
             points={convictionPoints}
             markers={markers}

@@ -59,18 +59,20 @@ const routes = {
 test("shows conviction, the signal, the data notes and the charts' inputs", async () => {
   mockApi(routes);
   renderApp("/security/acme");
-  expect(await screen.findByText(/Signal:/)).toBeInTheDocument();
-  expect(screen.getByText("buy", { selector: "strong" })).toBeInTheDocument();
+  // the banner comes from the STORED signals (the live endpoint only adds a pending transition)
+  expect(await screen.findByText(/Latest signal:/)).toHaveTextContent("buy at 78 on 2026-10-22");
+  expect(screen.getByText(/New since the last stored score/)).toBeInTheDocument();
+  expect(screen.getByText("Conviction (live)")).toBeInTheDocument();
   expect(screen.getByText("no dividend data")).toBeInTheDocument();
   expect(await screen.findByTestId("price-chart")).toHaveTextContent("2 bars");
-  // blocked and all-abstained runs are not plotted as convictions; the signal is a marker
-  expect(await screen.findByTestId("line-chart")).toHaveTextContent("2 points, 1 markers");
+  // blocked and all-abstained runs become gaps instead of a line across them; the signal is a marker
+  expect(await screen.findByTestId("line-chart")).toHaveTextContent("2 points, 2 gaps, 1 markers");
 });
 
 test("lists evaluated philosophies first and expands the criteria with actual vs limit", async () => {
   mockApi(routes);
   renderApp("/security/ACME");
-  await screen.findByText(/Signal:/);
+  await screen.findByText(/Latest signal:/);
   const order = screen
     .getAllByText(/^(Buffett|Graham|Lynch)$/)
     .map((e) => e.textContent);
@@ -78,6 +80,25 @@ test("lists evaluated philosophies first and expands the criteria with actual vs
   await userEvent.click(screen.getByText("Lynch"));
   expect(screen.getAllByText(/limit 15/).length).toBeGreaterThan(0);
   expect(screen.getAllByLabelText("failed").length).toBeGreaterThan(0);
+});
+
+test("a stock that is already high shows no pending signal when none is new", async () => {
+  mockApi({ ...routes, "GET /api/securities/ACME/score": { ...score, signal: null } });
+  renderApp("/security/ACME");
+  expect(await screen.findByText(/Latest signal:/)).toBeInTheDocument();
+  expect(screen.queryByText(/New since the last stored score/)).not.toBeInTheDocument();
+});
+
+test("a leftover 'sell the whole position' never turns a buy into an empty order", async () => {
+  mockApi(routes);
+  renderApp("/security/ACME");
+  await userEvent.click(await screen.findByRole("button", { name: "Sell" }));
+  await userEvent.click(screen.getByLabelText("Sell the whole position"));
+  expect(screen.getByRole("button", { name: "Place sell order" })).toBeEnabled();
+  await userEvent.click(screen.getByRole("button", { name: "Buy" }));
+  expect(screen.getByRole("button", { name: "Place buy order" })).toBeDisabled(); // no amount
+  await userEvent.click(screen.getByRole("button", { name: "Sell" }));
+  expect(screen.getByLabelText("Sell the whole position")).not.toBeChecked(); // was reset
 });
 
 test("an unknown ticker gets a helpful message, not a crash", async () => {

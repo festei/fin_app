@@ -39,7 +39,9 @@ export function OrderTicket({
   }
 
   const value = Number(amount);
-  const valid = sellAll || (Number.isFinite(value) && value > 0);
+  // "sell the whole position" needs no amount; every other order does
+  const closesPosition = side === "sell" && sellAll;
+  const valid = closesPosition || (Number.isFinite(value) && value > 0);
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -48,7 +50,7 @@ export function OrderTicket({
       {
         ticker,
         side,
-        ...(side === "sell" && sellAll ? {} : { notional: value }),
+        ...(closesPosition ? {} : { notional: value }),
       },
       {
         onSuccess: () => {
@@ -81,7 +83,10 @@ export function OrderTicket({
             type="button"
             className={side === s ? `active ${s}` : ""}
             aria-pressed={side === s}
-            onClick={() => setSide(s)}
+            onClick={() => {
+              setSide(s);
+              setSellAll(false); // a leftover "sell all" must not leak into a buy
+            }}
           >
             {s === "buy" ? "Buy" : "Sell"}
           </button>
@@ -93,7 +98,7 @@ export function OrderTicket({
           Sell the whole position
         </label>
       )}
-      {!(side === "sell" && sellAll) && (
+      {!closesPosition && (
         <label>
           Amount (USD)
           <input

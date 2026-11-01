@@ -295,3 +295,15 @@ def test_feed_items_and_read_state(raw_engine, seed_company):
         assert signals_repo.mark_alert_read(s, 99999, NOW) is False
         assert signals_repo.list_alerts(s, unread_only=True) == []
         assert signals_repo.list_alerts(s, before_id=alert.id) == []  # cursor
+
+
+def test_the_feed_leaves_out_the_telegram_command_hint_but_the_stored_body_keeps_it(
+    raw_engine, seed_company
+):
+    seed_company(raw_engine, "AAA", price=25.0)
+    (outcome,) = process_signals(raw_engine, new_signal_ids(raw_engine), POLICY, [IN_APP], NOW)
+    with session_scope(raw_engine) as s:
+        alert = s.get(AlertRecord, outcome.alert_id)
+        assert "Use /why AAA" in alert.body  # what Telegram sends
+        body = feed_item(alert, "AAA", [])["body"]
+    assert "Use /why" not in body and "Scores:" in body

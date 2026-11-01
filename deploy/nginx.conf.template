@@ -1,8 +1,30 @@
 # Rendered at container start by the nginx image (envsubst on /etc/nginx/templates/*.template).
-#   API_TOKEN   bearer token added to every /api request; the browser never sees it
+#   API_TOKEN   bearer token added to every /api request; the browser never sees it. It lands
+#               inside a quoted nginx string, so it must be URL-safe (letters, digits . _ ~ -);
+#               generate one with `openssl rand -hex 32`. 10-validate-env.sh refuses to start otherwise.
 #   AUTH_BASIC  basic-auth realm, or "off" (dev compose). The user file is mounted at
-#               /etc/nginx/htpasswd (prod compose requires it; without it nginx answers 500, so
-#               a missing file fails closed).
+#               /etc/nginx/htpasswd (prod compose requires it; the validator also refuses to start
+#               without it unless auth is off).
+#
+# This container speaks plain HTTP: basic-auth credentials are sent in cleartext, so in
+# production put a TLS terminator (load balancer, Caddy, Traefik, ...) in front of it. HSTS below
+# only takes effect once the site is served over HTTPS.
+
+# Every request is counted against its client address, including failed basic-auth attempts (the
+# limit runs before the auth check), which slows password guessing down. It is a speed bump, not
+# a lockout; use fail2ban or the terminator's rate limits for more.
+limit_req_zone $binary_remote_addr zone=perclient:10m rate=10r/s;
+
+# CSRF guard. Browsers attach cached basic-auth credentials to cross-site requests and nginx adds
+# the API token to whatever passes basic auth, so a state-changing /api request must carry a
+# header that a cross-site form post cannot set (and that a cross-origin fetch could only send
+# after a CORS preflight, which this server never grants). The UI's API client sends it.
+map "$request_method:$http_x_requested_with" $api_request_allowed {
+  default 0;
+  "~^(GET|HEAD|OPTIONS):" 1;
+  "~^[A-Z]+:fin-app$" 1;
+}
+
 server {
   listen 8080;
   root /usr/share/nginx/html;
@@ -11,12 +33,16 @@ server {
   add_header X-Content-Type-Options nosniff always;
   add_header Referrer-Policy no-referrer always;
   add_header X-Frame-Options DENY always;
+  add_header Strict-Transport-Security "max-age=31536000" always;
+  add_header Content-Security-Policy "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'" always;
 
   auth_basic "${AUTH_BASIC}";
   auth_basic_user_file /etc/nginx/htpasswd;
 
   # API + WebSocket go to the api service; everything else is the SPA.
   location /api/ {
+    limit_req zone=perclient burst=60 nodelay;
+    if ($api_request_allowed = 0) { return 403; }
     proxy_pass http://api:8000;
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
@@ -28,8 +54,11 @@ server {
     proxy_read_timeout 3600s;
   }
   location = /healthz {
-    auth_basic off;  # container health checks carry no credentials
+    auth_basic off;  # container health checks carry no credentials (and no rate limit)
     proxy_pass http://api:8000/healthz;
   }
-  location / { try_files $uri /index.html; }
+  location / {
+    limit_req zone=perclient burst=60 nodelay;
+    try_files $uri /index.html;
+  }
 }

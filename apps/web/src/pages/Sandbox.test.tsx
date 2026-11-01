@@ -1,6 +1,6 @@
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { fail, mockApi, renderApp } from "../test/utils";
 
 const portfolio = (id: number, extra = {}) => ({
@@ -76,6 +76,21 @@ test("portfolio page shows positions, orders and cancels a pending order", async
   expect(screen.getByText("2 @ $10.00 · 2026-10-02")).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
   expect(calls.some((c) => c.method === "DELETE" && c.url === "/api/portfolios/1/orders/2")).toBe(true);
+});
+
+test("placing or cancelling an order marks the overview as stale, not just the portfolio", async () => {
+  mockApi({
+    "GET /api/portfolios/1": detail(),
+    "GET /api/portfolios/1/history": [],
+    "GET /api/portfolios/1/orders": [order(2, "pending")],
+    "DELETE /api/portfolios/1/orders/2": { id: 2, cancelled: true },
+  });
+  const { client } = renderApp("/sandbox/1");
+  const cancel = await screen.findByRole("button", { name: "Cancel" });
+  client.setQueryData(["portfolios"], [portfolio(1)]); // the overview was loaded earlier
+  expect(client.getQueryState(["portfolios"])?.isInvalidated).toBe(false);
+  await userEvent.click(cancel);
+  await vi.waitFor(() => expect(client.getQueryState(["portfolios"])?.isInvalidated).toBe(true));
 });
 
 test("a strategy portfolio shows its settings instead of an order ticket", async () => {

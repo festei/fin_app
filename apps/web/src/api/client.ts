@@ -39,7 +39,9 @@ function describe(detail: unknown, status: number): string {
  * adds `Authorization` to /api requests, so no credentials appear here.
  */
 export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const headers: Record<string, string> = { Accept: "application/json" };
+  // X-Requested-With: the proxy refuses state-changing requests without it, which a cross-site
+  // form post cannot send (CSRF guard; see deploy/nginx.conf.template).
+  const headers: Record<string, string> = { Accept: "application/json", "X-Requested-With": "fin-app" };
   if (init.body) headers["Content-Type"] = "application/json";
   const res = await fetch(path, { ...init, headers: { ...headers, ...(init.headers as object) } });
   if (!res.ok) {

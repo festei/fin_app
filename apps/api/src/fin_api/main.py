@@ -34,6 +34,7 @@ from fin_core.db.models import (
 from fin_core.db.session import database_configured, database_url, make_engine, session_scope
 from fin_core.features import FeatureFlags
 from fin_core.graph import build_graph, load_config
+from fin_core.graph.build import BUY_REARM_BELOW, SELL_REARM_ABOVE
 from fin_core.metrics import UnknownSecurityError
 from fin_core.models import ScoreResult, SecurityMetrics, Signal
 from fin_core.sandbox import engine as sandbox
@@ -192,8 +193,11 @@ def score_ticker(
     Needs a configured database with ingested fundamentals and prices. Data gaps are not
     errors: they show up as ``metrics.warnings`` and as failed criteria, and while the data is
     too poor to act on (``metrics.signal_blockers``) no signal is emitted. A future ``as_of`` is
-    rejected (422). ``previous_conviction`` is supplied by the caller only until signals and
-    their history are persisted.
+    rejected (422). This scores live and stores nothing. For "today" (no ``as_of``) the signal is
+    judged against the stored baseline and hysteresis, exactly as the scheduled run would, so
+    ``signal`` is only set when a transition has happened since the last stored score (and not on
+    every visit to a stock that is already high); pass ``previous_conviction`` to override the
+    baseline, or ``as_of`` for a what-if without one.
     """
     if not database_configured():
         raise HTTPException(503, detail="database not configured")
@@ -202,11 +206,25 @@ def score_ticker(
         raise HTTPException(422, detail=f"as_of {as_of} is in the future (today is {today} UTC)")
     try:
         with session_scope(_engine(database_url())) as session:
+            buy_armed = sell_armed = True
+            if previous_conviction is None and as_of is None:
+                sec = repo.get_security(session, ticker)
+                if sec is not None:
+                    baseline = signals_repo.latest_actionable_score(session, sec.id)
+                    previous_conviction = baseline.conviction if baseline else None
+                    buy_armed, sell_armed = signals_repo.armed_state(
+                        session,
+                        sec.id,
+                        buy_rearm_below=BUY_REARM_BELOW,
+                        sell_rearm_above=SELL_REARM_ABOVE,
+                    )
             out = score_security(
                 session,
                 ticker,
                 as_of or today,
                 previous_conviction=previous_conviction,
+                buy_armed=buy_armed,
+                sell_armed=sell_armed,
                 graph=_graph(),
                 config=_config(),
             )
