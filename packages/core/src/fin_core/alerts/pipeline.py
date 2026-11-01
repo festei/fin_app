@@ -28,6 +28,10 @@ _AGREE_AT = 70.0  # a philosophy "agrees" with a buy when it scores at least thi
 KIND_LABEL = {"buy": "BUY", "sell": "SELL", "emerging": "EMERGING"}
 
 
+# The last line of an alert points at a Telegram bot command; the in-app feed leaves it out.
+TELEGRAM_HINT = "Use /why"
+
+
 def build_message_text(
     sec: Security, signal: SignalRecord, score: ScoreRecord | None
 ) -> tuple[str, str]:
@@ -65,7 +69,7 @@ def build_message_text(
         lines.append(f"Note: {note}")
     for warning in details.get("warnings") or []:
         lines.append(f"Data: {warning}")
-    lines.append(f"Use /why {sec.ticker} for the full breakdown.")
+    lines.append(f"{TELEGRAM_HINT} {sec.ticker} for the full breakdown.")
     return title[:200], "\n".join(lines)
 
 
@@ -274,7 +278,9 @@ def feed_item(alert: AlertRecord, ticker: str, deliveries: list[Any]) -> dict[st
         "severity": alert.severity,
         "conviction": alert.conviction,
         "title": alert.title,
-        "body": alert.body,
+        "body": "\n".join(
+            line for line in alert.body.split("\n") if not line.startswith(TELEGRAM_HINT)
+        ),
         "created_at": alert.created_at.isoformat() if alert.created_at else None,
         "read": alert.read_at is not None,
         "deliveries": {d.channel: d.status for d in deliveries if d.alert_id == alert.id},

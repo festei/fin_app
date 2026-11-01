@@ -18,7 +18,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-fin}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fin}
       POSTGRES_DB: ${POSTGRES_DB:-fin}
-    ports: ["5432:5432"]
+    ports: ["127.0.0.1:5432:5432"]  # this machine only
     volumes: [dbdata:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fin}"]
@@ -28,7 +28,7 @@ services:
   prefect:
     image: prefecthq/prefect:3.7.7-python3.12
     command: prefect server start --host 0.0.0.0
-    ports: ["4200:4200"]
+    ports: ["127.0.0.1:4200:4200"]  # this machine only
     volumes: [prefectdata:/root/.prefect]
 
   migrate:
@@ -53,7 +53,7 @@ services:
       <<: *dbenv
       API_TOKEN: ${API_TOKEN:-dev-token}   # dev default; write endpoints need it
     depends_on: { migrate: { condition: service_completed_successfully } }
-    ports: ["8000:8000"]
+    ports: ["127.0.0.1:8000:8000"]  # dev token: reachable from this machine only
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/healthz')"]
       interval: 10s
@@ -86,7 +86,10 @@ services:
 
   web:
     build: { context: .., dockerfile: deploy/web.Dockerfile }
-    ports: ["8080:8080"]
+    ports: ["127.0.0.1:8080:8080"]  # auth is off in dev: this machine only
+    environment:
+      API_TOKEN: ${API_TOKEN:-dev-token}   # same value as the api service; added by nginx
+      AUTH_BASIC: "off"                    # dev only; prod compose turns basic auth on
     depends_on: [api]
 
 volumes:
