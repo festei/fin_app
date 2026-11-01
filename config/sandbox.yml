@@ -1,0 +1,9 @@
+# Paper-trading sandbox defaults. A strategy portfolio copies these when it is created.
+# Fills happen at the first daily close AFTER the day of the decision (no look-ahead), at the
+# source's adjusted price. Not investment advice.
+sandbox:
+  position_pct: 0.20        # a buy spends this share of the portfolio's total value...
+  max_positions: 5          # ...while fewer than this many positions are held or pending
+  min_cash_pct: 0.05        # never spend the last bit of cash
+  buy_kinds: [buy, emerging]
+  fee_bps: 0                # trading cost in basis points of the traded value

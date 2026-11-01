@@ -1,4 +1,4 @@
-"""The daily pipeline: ingestion in order, then scoring, as ONE flow.
+"""The daily pipeline: ingestion in order, then scoring, then the sandbox, as ONE flow.
 
 Scheduling these as separate cron entries only orders them by clock: a slow ingestion would still
 be followed by a scoring run on old data. Chained here, scoring starts when ingestion has actually
@@ -17,6 +17,7 @@ from fin_flows.ingestion import (
     ingest_yields_flow,
     sync_universe_flow,
 )
+from fin_flows.sandbox import sandbox_step_flow
 from fin_flows.scoring import score_universe_flow
 
 
@@ -28,6 +29,7 @@ def steps():
         ("ingest-yields", ingest_yields_flow),
         ("ingest-fundamentals", ingest_fundamentals_flow),
         ("score-universe", score_universe_flow),
+        ("sandbox-step", sandbox_step_flow),
     ]
 
 

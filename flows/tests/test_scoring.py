@@ -69,6 +69,7 @@ def test_pipeline_runs_ingestion_in_order_and_scoring_last():
         "ingest-yields",
         "ingest-fundamentals",
         "score-universe",
+        "sandbox-step",
     ]
 
 
