@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Investment opportunity scanner for US stocks and bonds: ingest fundamentals/prices/yields, score securities against investment philosophies (Graham first), emit signals on score transitions, and feed an in-app alert feed, a paper-trading sandbox and an optional Telegram channel. It is built in phases; **Phases 0-5 are done (Phase 3 except for the intraday fast loop)**: scoring graph (Graham, Buffett, Lynch, Greenblatt and Fisher nodes plus Piotroski/Altman guardrails), data layer, ingestion, the point-in-time metrics layer, API, web scaffold. Not built yet: the Beneish guardrail, bond scorers, intraday price polling with incremental re-scoring (the worker only runs the Telegram bot, delivery retries and the single-instance lock), bond screens in the UI. Not investment advice.
+Investment opportunity scanner for US stocks and bonds: ingest fundamentals/prices/yields, score securities against investment philosophies (Graham first), emit signals on score transitions, and feed an in-app alert feed, a paper-trading sandbox and an optional Telegram channel. It is built in phases; **Phases 0-5 are done (Phase 3 except for the intraday fast loop)**: scoring graph (Graham, Buffett, Lynch, Greenblatt and Fisher nodes plus Piotroski/Altman guardrails), data layer, ingestion, the point-in-time metrics layer, API, paper-trading sandbox, web UI. Not built yet: the Beneish guardrail, bond scorers, intraday price polling with incremental re-scoring (the worker only runs the Telegram bot, delivery retries and the single-instance lock), bond screens in the UI. Not investment advice.
+
+Specs for each executed plan are in `docs/specs/` and end-to-end architecture diagrams (Mermaid) in `docs/architecture/`; update the matching diagram when a change alters a component.
 
 ## Commands
 

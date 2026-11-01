@@ -95,3 +95,8 @@ Simulate what a small portfolio (say $100) would have done. `manual` portfolios 
 ## Web UI
 
 `cd apps/web && pnpm install && pnpm dev` serves the UI on :5173 and proxies `/api` to the API on :8000 (adding the write token, `API_TOKEN`, default `dev-token`, so the browser never holds it). To look at it without real data, `uv run python scripts/seed_demo.py sqlite:///demo.db` builds a database of **synthetic** companies, then start the API with `DATABASE_URL=sqlite:///demo.db API_TOKEN=dev-token`. In the web container, nginx does the proxying and token injection; the prod compose also requires basic auth (`HTPASSWD_FILE`, e.g. `htpasswd -B -c htpasswd me`). That container speaks plain HTTP, so **put a TLS terminator in front of it** in production. `API_TOKEN` must be URL-safe (`openssl rand -hex 32`). The seed script refuses non-SQLite databases and databases that already contain securities unless `--force` is given.
+
+## Documentation
+
+- [`docs/specs/`](docs/specs/README.md): one spec per executed plan (vision and roadmap, then phases 0 to 5), each with its review outcomes and known limits.
+- [`docs/architecture/`](docs/architecture/README.md): end-to-end diagrams (containers, repository map, data model, pipelines and the scoring graph, alerts, sandbox, API and web, deployment and security).
