@@ -17,8 +17,8 @@ from fin_core.db import migrate, repo, signals_repo
 from fin_core.db.models import (
     Portfolio,
     PortfolioSnapshot,
+    PriceBar,
     SandboxOrder,
-    SandboxPosition,
     Security,
 )
 from fin_core.db.session import make_engine, session_scope
@@ -66,8 +66,8 @@ def state(engine, pid):
     with session_scope(engine) as s:
         p = s.get(Portfolio, pid)
         held = {
-            s.get(Security, x.security_id).ticker: (x.quantity, x.avg_cost)
-            for x in s.scalars(select(SandboxPosition).where(SandboxPosition.portfolio_id == pid))
+            s.get(Security, h.security_id).ticker: (h.quantity, h.avg_cost)
+            for h in sb.holdings(s, pid).values()
         }
         return p.cash, held
 
@@ -341,3 +341,119 @@ def test_migration_0004_round_trips(tmp_path):
     migrate.downgrade(url, "0003")
     migrate.upgrade(url)
     make_engine(url).dispose()
+
+
+# --- corporate actions, ordering, locking ------------------------------------------------------
+
+
+def restate(engine, ticker, closes: dict[int, float]):
+    """Overwrite stored closes, as the price source does when it re-adjusts history."""
+    with session_scope(engine) as s:
+        sid = repo.get_security(s, ticker).id
+        for d, c in closes.items():
+            row = s.get(PriceBar, (sid, bar(date(2025, 3, d), c)["ts"]))
+            row.close = c
+
+
+def test_a_two_for_one_split_is_neither_a_loss_nor_a_gain(db):
+    prices(db, "AAA", {11: 100.0})
+    pid = portfolio(db, cash=1000)
+    order(db, pid, "AAA", "buy", at(10), quantity=1)
+    settle(db, pid, at(11, 23))
+    assert state(db, pid)[1]["AAA"] == (D("1"), D("100"))
+    # 2:1 split: the source re-adjusts the old bar to 50 and the market trades at 55
+    restate(db, "AAA", {11: 50.0})
+    prices(db, "AAA", {12: 55.0})
+    cash, held = state(db, pid)
+    assert held["AAA"] == (D("2"), D("50"))  # two shares at an average cost of 50
+    with session_scope(db) as s:
+        p = s.get(Portfolio, pid)
+        assert sb.positions_value(s, p, at(12, 23)) == D("110.0000")  # 2 x 55, a gain of 10
+
+
+def test_a_reverse_split_and_selling_after_a_split(db):
+    prices(db, "AAA", {11: 10.0})
+    pid = portfolio(db, cash=1000)
+    order(db, pid, "AAA", "buy", at(10), quantity=10)
+    settle(db, pid, at(11, 23))
+    restate(db, "AAA", {11: 50.0})  # 1:5 reverse split
+    prices(db, "AAA", {12: 50.0})
+    assert state(db, pid)[1]["AAA"] == (D("2"), D("50"))
+    order(db, pid, "AAA", "sell", at(11))  # sell it all after the split
+    settle(db, pid, at(12, 23))
+    cash, held = state(db, pid)
+    assert held == {} and cash == D("900") + D("100")  # 2 shares x 50, no phantom gain or loss
+
+
+def test_a_partial_sale_after_a_split_keeps_the_right_remainder(db):
+    prices(db, "AAA", {11: 100.0})
+    pid = portfolio(db, cash=1000)
+    order(db, pid, "AAA", "buy", at(10), quantity=4)
+    settle(db, pid, at(11, 23))
+    restate(db, "AAA", {11: 50.0})
+    prices(db, "AAA", {12: 50.0})
+    order(db, pid, "AAA", "sell", at(11), quantity=3)  # of the 8 post-split shares
+    settle(db, pid, at(12, 23))
+    assert state(db, pid)[1]["AAA"] == (D("5"), D("50"))
+
+
+def test_buy_fees_are_part_of_the_cost_basis(db):
+    prices(db, "AAA", {11: 10.0})
+    pid = portfolio(db, fee_bps=100)
+    order(db, pid, "AAA", "buy", at(10), quantity=5)  # 50 + 0.50 fee
+    settle(db, pid, at(11, 23))
+    assert state(db, pid)[1]["AAA"] == (D("5"), D("10.1"))
+
+
+def test_a_sale_on_the_same_close_funds_a_purchase(db):
+    prices(db, "AAA", {11: 10.0, 13: 10.0})
+    prices(db, "BBB", {13: 10.0})
+    pid = portfolio(db, cash=100)
+    order(db, pid, "AAA", "buy", at(10), quantity=10)  # spends it all on the 11th
+    settle(db, pid, at(11, 23))
+    buy = order(db, pid, "BBB", "buy", at(12), quantity=10)  # needs the sale's cash
+    sell = order(db, pid, "AAA", "sell", at(12))
+    done = settle(db, pid, at(13, 23))
+    assert done == [sell, buy]  # sells go first at the same close
+    with session_scope(db) as s:
+        assert s.get(SandboxOrder, buy).status == "filled"
+
+
+def test_overlapping_runs_do_not_duplicate_strategy_orders(db):
+    if db.dialect.name != "postgresql":
+        pytest.skip("needs real row locks")
+    import threading
+
+    prices(db, "AAA", {10: 10.0})
+    pid = portfolio(db, mode="strategy")
+    signal(db, "AAA", "buy", 10)
+    barrier = threading.Barrier(2)
+
+    def go():
+        barrier.wait()
+        run_sandbox(db, at(10, 22))
+
+    threads = [threading.Thread(target=go) for _ in range(2)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert len(orders(db, pid)) == 1
+
+
+def test_locking_an_unknown_portfolio_fails_cleanly(db):
+    with session_scope(db) as s, pytest.raises(sb.UnknownError):
+        sb.lock_portfolio(s, 999)
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), 10**15, 0])
+def test_non_finite_and_oversized_amounts_are_refused_by_the_engine(db, bad):
+    pid = portfolio(db)
+    with session_scope(db) as s, pytest.raises(sb.OrderError):
+        sb.place_order(s, pid, "AAA", "buy", quantity=bad)
+    with session_scope(db) as s, pytest.raises(sb.OrderError):
+        sb.create_portfolio(s, "x", mode="manual", cash=bad, defaults=SandboxConfig())
+
+
+@pytest.mark.parametrize("kinds", [["sell"], "buy", [], ["buy", "x"], 5])
+def test_config_rejects_bad_buy_kinds(kinds):
+    with pytest.raises(ValueError):
+        SandboxConfig.from_dict({"buy_kinds": kinds})

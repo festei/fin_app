@@ -26,7 +26,7 @@ def run_sandbox(engine: Engine, as_of: datetime | None = None) -> RunSummary:
         for pid in ids:
             try:
                 with session_scope(engine) as s:
-                    portfolio = s.get(Portfolio, pid)
+                    portfolio = sandbox.lock_portfolio(s, pid)  # serialises overlapping runs
                     sandbox.run_strategy(s, portfolio, as_of)
                     sandbox.settle(s, portfolio, as_of)
                     sandbox.snapshot(s, portfolio, as_of)

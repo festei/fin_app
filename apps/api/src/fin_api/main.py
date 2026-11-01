@@ -9,7 +9,9 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from functools import lru_cache
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import Engine, select, text
 from sqlalchemy.exc import SQLAlchemyError
@@ -22,7 +24,6 @@ from fin_core.db.models import (
     Portfolio,
     PortfolioSnapshot,
     SandboxOrder,
-    SandboxPosition,
     Security,
 )
 from fin_core.db.session import database_configured, database_url, make_engine, session_scope
@@ -45,6 +46,18 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="fin-app API", version=__version__, lifespan=lifespan)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
+    """422 without echoing the rejected input. FastAPI's default body repeats it, and a value
+    like ``Infinity``/``NaN`` cannot be encoded as JSON, which turned a rejected request into a
+    500."""
+    errors = [
+        {"loc": list(e.get("loc", ())), "msg": e.get("msg", ""), "type": e.get("type", "")}
+        for e in exc.errors()
+    ]
+    return JSONResponse(status_code=422, content={"detail": errors})
 
 
 @lru_cache
@@ -419,16 +432,16 @@ class SnapshotOut(BaseModel):
 class NewPortfolio(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     mode: str
-    cash: float = Field(gt=0, le=1e12)
-    fee_bps: float | None = Field(default=None, ge=0, le=1000)
+    cash: float = Field(gt=0, le=1e12, allow_inf_nan=False)
+    fee_bps: float | None = Field(default=None, ge=0, le=1000, allow_inf_nan=False)
     strategy: dict | None = None  # overrides of config/sandbox.yml (strategy portfolios)
 
 
 class NewOrder(BaseModel):
-    ticker: str
+    ticker: str = Field(min_length=1, max_length=16)
     side: str
-    quantity: float | None = None
-    notional: float | None = None
+    quantity: float | None = Field(default=None, gt=0, le=1e9, allow_inf_nan=False)
+    notional: float | None = Field(default=None, gt=0, le=1e12, allow_inf_nan=False)
 
 
 def _f(x: Decimal | float | None) -> float | None:
@@ -518,28 +531,23 @@ def get_portfolio(portfolio_id: int) -> dict:
     with _db() as s:
         p = _portfolio(s, portfolio_id)
         rows = []
-        for pos in s.scalars(
-            select(SandboxPosition)
-            .where(SandboxPosition.portfolio_id == p.id)
-            .order_by(SandboxPosition.security_id)
-        ):
-            sec = s.get(Security, pos.security_id)
-            price = sandbox.last_close(s, pos.security_id, now)
-            qty, cost = Decimal(pos.quantity), Decimal(pos.avg_cost)
-            value = qty * (price if price is not None else cost)
-            basis = qty * cost
+        for h in sandbox.holdings(s, p.id).values():
+            sec = s.get(Security, h.security_id)
+            price = sandbox.last_close(s, h.security_id, now)
+            value = h.quantity * price if price is not None else h.cost
             rows.append(
                 PositionOut(
                     ticker=sec.ticker,
                     name=sec.name,
-                    quantity=float(qty),
-                    avg_cost=float(cost),
+                    quantity=float(h.quantity),
+                    avg_cost=float(h.avg_cost),
                     price=_f(price),
                     market_value=float(value),
-                    pnl=float(value - basis),
-                    pnl_pct=float((value - basis) / basis * 100) if basis else None,
+                    pnl=float(value - h.cost),
+                    pnl_pct=float((value - h.cost) / h.cost * 100) if h.cost else None,
                 )
             )
+        rows.sort(key=lambda r: r.ticker)
         return {**_view(s, p, now), "positions": rows}
 
 

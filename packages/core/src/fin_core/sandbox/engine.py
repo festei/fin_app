@@ -1,5 +1,12 @@
 """The paper-trading engine: orders, fills, strategy, valuation, snapshots.
 
+Holdings are not stored: they are derived from the filled orders and restated to today's share
+basis. Prices are the source's split/dividend-adjusted prices, and the source restates old bars
+when a split happens, so each fill is scaled by (price it filled at / what that bar's close is
+now). After a 2:1 split a holding of 1 share bought at 100 becomes 2 shares at an average cost of
+50, so a split is neither a loss nor a gain (and dividends show up as slightly more shares, like
+reinvested dividends).
+
 Fill model (no look-ahead, honest for daily data): an order decided on day D fills at the close of
 the first stored daily bar on a day after D, at the source's adjusted price. Until such a bar
 exists it stays ``pending``. Cash and holdings are checked at fill time; an order that cannot be
@@ -11,11 +18,12 @@ Not investment advice.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import ROUND_DOWN, Decimal
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 from fin_core.db import repo
@@ -24,7 +32,6 @@ from fin_core.db.models import (
     PortfolioSnapshot,
     PriceBar,
     SandboxOrder,
-    SandboxPosition,
     Security,
     SignalRecord,
 )
@@ -33,6 +40,9 @@ from fin_core.sandbox.config import SandboxConfig
 Q6 = Decimal("0.000001")
 Q4 = Decimal("0.0001")
 MIN_NOTIONAL = Decimal("0.01")
+MAX_QUANTITY = Decimal(10) ** 9  # far below the Numeric(18, 6) column limit
+MAX_NOTIONAL = Decimal(10) ** 12
+MAX_CASH = Decimal(10) ** 12
 MODES = ("manual", "strategy")
 
 
@@ -49,7 +59,13 @@ def _utc(dt: datetime) -> datetime:
 
 
 def _dec(x: Any) -> Decimal:
-    return x if isinstance(x, Decimal) else Decimal(str(x))
+    try:
+        d = x if isinstance(x, Decimal) else Decimal(str(x))
+    except ArithmeticError:
+        raise OrderError(f"not a number: {x!r}") from None
+    if not d.is_finite():
+        raise OrderError(f"not a finite number: {x!r}")
+    return d
 
 
 def _day_after(dt: datetime) -> datetime:
@@ -74,8 +90,8 @@ def create_portfolio(
     if mode not in MODES:
         raise OrderError(f"mode must be one of {MODES}")
     cash = _dec(cash)
-    if cash <= 0:
-        raise OrderError("starting cash must be positive")
+    if not 0 < cash <= MAX_CASH:
+        raise OrderError(f"starting cash must be in (0, {MAX_CASH}]")
     if not name.strip():
         raise OrderError("name must not be empty")
     defaults = defaults or SandboxConfig.load()
@@ -87,8 +103,8 @@ def create_portfolio(
         except (ValueError, TypeError) as exc:
             raise OrderError(f"invalid strategy configuration: {exc}") from None
     fee = _dec(defaults.fee_bps if fee_bps is None else fee_bps)
-    if fee < 0:
-        raise OrderError("fee_bps must not be negative")
+    if not 0 <= fee <= 1000:
+        raise OrderError("fee_bps must be between 0 and 1000")
     last_signal = session.scalar(select(SignalRecord.id).order_by(SignalRecord.id.desc()).limit(1))
     portfolio = Portfolio(
         name=name.strip(),
@@ -101,6 +117,21 @@ def create_portfolio(
     )
     session.add(portfolio)
     session.flush()
+    return portfolio
+
+
+def lock_portfolio(session: Session, portfolio_id: int) -> Portfolio:
+    """Load a portfolio holding a row lock for the rest of the transaction (``FOR UPDATE`` on
+    Postgres, a no-op on SQLite). Concurrent runs of the step queue up here, so the second one
+    sees the first one's ``last_signal_id`` and orders instead of duplicating them."""
+    portfolio = session.scalar(
+        select(Portfolio)
+        .where(Portfolio.id == portfolio_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if portfolio is None:
+        raise UnknownError(f"unknown portfolio {portfolio_id}")
     return portfolio
 
 
@@ -154,8 +185,12 @@ def place_order(
         raise OrderError("side must be 'buy' or 'sell'")
     qty = _dec(quantity) if quantity is not None else None
     amount = _dec(notional) if notional is not None else None
-    if (qty is not None and qty <= 0) or (amount is not None and amount <= 0):
-        raise OrderError("quantity and notional must be positive")
+    if (qty is not None and not 0 < qty <= MAX_QUANTITY) or (
+        amount is not None and not 0 < amount <= MAX_NOTIONAL
+    ):
+        raise OrderError(
+            f"quantity must be in (0, {MAX_QUANTITY}] and notional in (0, {MAX_NOTIONAL}]"
+        )
     if qty is not None and amount is not None:
         raise OrderError("give a quantity or a notional amount, not both")
     if side == "buy" and qty is None and amount is None:
@@ -181,17 +216,60 @@ def cancel_order(session: Session, portfolio_id: int, order_id: int, reason: str
     return True
 
 
-# --- valuation ---------------------------------------------------------------------------------
+# --- holdings and valuation --------------------------------------------------------------------
 
 
-def _holdings(session: Session, portfolio_id: int) -> list[SandboxPosition]:
-    return list(
-        session.scalars(
-            select(SandboxPosition)
-            .where(SandboxPosition.portfolio_id == portfolio_id)
-            .order_by(SandboxPosition.security_id)
+@dataclass(frozen=True)
+class Holding:
+    security_id: int
+    quantity: Decimal  # in today's share basis
+    cost: Decimal  # total spent on what is still held, buy fees included
+    avg_cost: Decimal  # per share of today's basis
+
+
+DUST = Decimal("0.000001")
+
+
+def holdings(session: Session, portfolio_id: int) -> dict[int, Holding]:
+    """What the portfolio holds now, derived from its filled orders (average-cost accounting).
+
+    Every fill is restated to today's share basis by ``fill price / current stored close of the
+    bar it filled at``: the price source re-adjusts history after a split (or dividend), so that
+    ratio is the cumulative adjustment since the fill. With no corporate action it is exactly 1.
+    """
+    rows = session.execute(
+        select(SandboxOrder, PriceBar.close)
+        .outerjoin(
+            PriceBar,
+            and_(
+                PriceBar.security_id == SandboxOrder.security_id,
+                PriceBar.ts == SandboxOrder.filled_at,
+            ),
         )
-    )
+        .where(SandboxOrder.portfolio_id == portfolio_id, SandboxOrder.status == "filled")
+        .order_by(SandboxOrder.filled_at, SandboxOrder.id)
+    ).all()
+    state: dict[int, list[Decimal]] = {}  # security -> [quantity, cost]
+    for order, current_close in rows:
+        price, filled = _dec(order.fill_price), _dec(order.fill_quantity)
+        factor = price / _dec(current_close) if current_close else Decimal(1)
+        qty = filled * factor
+        held = state.setdefault(order.security_id, [Decimal(0), Decimal(0)])
+        if order.side == "buy":
+            held[0] += qty
+            held[1] += filled * price + _dec(order.fee or 0)
+        else:
+            qty = min(qty, held[0])
+            if held[0] > 0:
+                held[1] -= held[1] * qty / held[0]
+            held[0] -= qty
+    out: dict[int, Holding] = {}
+    for security_id, (qty, cost) in state.items():
+        if qty > DUST:
+            out[security_id] = Holding(
+                security_id, qty.quantize(Q6), cost.quantize(Q4), (cost / qty).quantize(Q6)
+            )
+    return out
 
 
 def last_close(session: Session, security_id: int, as_of: datetime) -> Decimal | None:
@@ -202,9 +280,9 @@ def last_close(session: Session, security_id: int, as_of: datetime) -> Decimal |
 def positions_value(session: Session, portfolio: Portfolio, as_of: datetime) -> Decimal:
     """Holdings at the latest close at or before ``as_of`` (cost when a security has no bar)."""
     total = Decimal(0)
-    for pos in _holdings(session, portfolio.id):
-        price = last_close(session, pos.security_id, as_of) or _dec(pos.avg_cost)
-        total += _dec(pos.quantity) * price
+    for h in holdings(session, portfolio.id).values():
+        price = last_close(session, h.security_id, as_of)
+        total += h.quantity * price if price is not None else h.cost
     return total.quantize(Q4)
 
 
@@ -232,8 +310,8 @@ def _fill(
     session: Session, portfolio: Portfolio, order: SandboxOrder, price: Decimal, ts: datetime
 ) -> None:
     fee_rate = _dec(portfolio.fee_bps) / Decimal(10000)
-    pos = session.get(SandboxPosition, (portfolio.id, order.security_id))
-    held = _dec(pos.quantity) if pos else Decimal(0)
+    held_row = holdings(session, portfolio.id).get(order.security_id)
+    held = held_row.quantity if held_row else Decimal(0)
     if order.side == "buy":
         qty = (
             _dec(order.quantity)
@@ -247,21 +325,8 @@ def _fill(
         if cost > _dec(portfolio.cash):
             return _reject(order, f"insufficient cash: need {cost}, have {portfolio.cash}")
         portfolio.cash = _dec(portfolio.cash) - cost
-        if pos is None:
-            session.add(
-                SandboxPosition(
-                    portfolio_id=portfolio.id,
-                    security_id=order.security_id,
-                    quantity=qty,
-                    avg_cost=price,
-                )
-            )
-        else:
-            new_qty = held + qty
-            pos.avg_cost = ((held * _dec(pos.avg_cost) + qty * price) / new_qty).quantize(Q6)
-            pos.quantity = new_qty
     else:
-        if pos is None or held <= 0:
+        if held <= 0:
             return _reject(order, "nothing to sell")
         if order.quantity is not None:
             qty = _dec(order.quantity)
@@ -275,30 +340,33 @@ def _fill(
             return _reject(order, f"cannot sell {qty}, only {held} held")
         fee = (qty * price * fee_rate).quantize(Q4)
         portfolio.cash = _dec(portfolio.cash) + (qty * price).quantize(Q4) - fee
-        if held - qty <= 0:
-            session.delete(pos)
-        else:
-            pos.quantity = held - qty
     order.status = "filled"
     order.filled_at, order.fill_quantity, order.fill_price, order.fee = ts, qty, price, fee
 
 
 def settle(session: Session, portfolio: Portfolio, as_of: datetime) -> list[SandboxOrder]:
     """Fill every pending order whose fill bar exists by ``as_of``. Returns the orders that left
-    ``pending`` (filled or rejected), oldest first."""
+    ``pending`` (filled or rejected) in the order they were processed.
+
+    Processing order is by fill bar, and within the same bar sells before buys, so the proceeds of
+    a sale can fund a purchase that fills at the same close.
+    """
     pending = session.scalars(
         select(SandboxOrder)
         .where(SandboxOrder.portfolio_id == portfolio.id, SandboxOrder.status == "pending")
-        .order_by(SandboxOrder.created_at, SandboxOrder.id)
+        .order_by(SandboxOrder.id)
     ).all()
-    done = []
+    ready = []
     for order in pending:
         bar = _fill_bar(session, order, as_of)
-        if bar is None:
-            continue
-        _fill(session, portfolio, order, _dec(bar.close), _utc(bar.ts))
+        if bar is not None:
+            ready.append((_utc(bar.ts), order.side != "sell", order.id, order, bar))
+    ready.sort(key=lambda r: r[:3])
+    done = []
+    for ts, _, _, order, bar in ready:
+        _fill(session, portfolio, order, _dec(bar.close), ts)
         done.append(order)
-    session.flush()
+        session.flush()  # holdings() reads the filled orders
     return done
 
 
@@ -324,7 +392,8 @@ def run_strategy(session: Session, portfolio: Portfolio, as_of: datetime) -> lis
     for signal in signals:
         portfolio.last_signal_id = signal.id
         security = session.get(Security, signal.security_id)
-        pos = session.get(SandboxPosition, (portfolio.id, signal.security_id))
+        held = holdings(session, portfolio.id)
+        pos = held.get(signal.security_id)
         pending = list(
             session.scalars(
                 select(SandboxOrder).where(
@@ -337,7 +406,7 @@ def run_strategy(session: Session, portfolio: Portfolio, as_of: datetime) -> lis
                 o.security_id == signal.security_id and o.side == "buy" for o in pending
             ):
                 continue
-            slots = len(_holdings(session, portfolio.id)) + sum(o.side == "buy" for o in pending)
+            slots = len(held) + sum(o.side == "buy" for o in pending)
             if slots >= cfg.max_positions:
                 continue
             if last_close(session, signal.security_id, as_of) is None:

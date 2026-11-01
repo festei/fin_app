@@ -1,4 +1,4 @@
-"""paper-trading sandbox: portfolios, orders, positions, daily snapshots
+"""paper-trading sandbox: portfolios, orders, daily snapshots
 
 Revision ID: 0004
 Revises: 0003
@@ -63,23 +63,6 @@ def upgrade() -> None:
         "ix_sandbox_orders_portfolio_status", "sandbox_orders", ["portfolio_id", "status"]
     )
     op.create_table(
-        "sandbox_positions",
-        sa.Column(
-            "portfolio_id",
-            sa.Integer,
-            sa.ForeignKey("portfolios.id", ondelete="CASCADE"),
-            primary_key=True,
-        ),
-        sa.Column(
-            "security_id",
-            sa.Integer,
-            sa.ForeignKey("securities.id", ondelete="CASCADE"),
-            primary_key=True,
-        ),
-        sa.Column("quantity", sa.Numeric(18, 6), nullable=False),
-        sa.Column("avg_cost", sa.Numeric(18, 6), nullable=False),
-    )
-    op.create_table(
         "portfolio_snapshots",
         sa.Column(
             "portfolio_id",
@@ -96,7 +79,6 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_table("portfolio_snapshots")
-    op.drop_table("sandbox_positions")
     op.drop_index("ix_sandbox_orders_portfolio_status", table_name="sandbox_orders")
     op.drop_table("sandbox_orders")
     op.drop_table("portfolios")

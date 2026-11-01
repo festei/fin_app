@@ -265,6 +265,7 @@ class Portfolio(Base):
 
 class SandboxOrder(Base):
     """An order, decided at ``created_at`` and filled at the first daily close of a later day.
+    Holdings are derived from the filled orders (``sandbox.engine.holdings``), not stored.
 
     Buy: exactly one of ``quantity`` / ``notional``. Sell: ``quantity``, ``notional`` or neither
     (= close the whole position).
@@ -287,24 +288,12 @@ class SandboxOrder(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     # the signal that caused a strategy order (links a trade to its score, for later attribution)
     signal_id: Mapped[int | None] = mapped_column(BigInteger)
+    # the timestamp of the bar it filled at (kept so fills can be restated for later splits)
     filled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     fill_quantity: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
     fill_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
     fee: Mapped[Decimal | None] = mapped_column(Numeric(18, 4))
     reason: Mapped[str | None] = mapped_column(String(200))  # why rejected / cancelled
-
-
-class SandboxPosition(Base):
-    __tablename__ = "sandbox_positions"
-
-    portfolio_id: Mapped[int] = mapped_column(
-        ForeignKey("portfolios.id", ondelete="CASCADE"), primary_key=True
-    )
-    security_id: Mapped[int] = mapped_column(
-        ForeignKey("securities.id", ondelete="CASCADE"), primary_key=True
-    )
-    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
-    avg_cost: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
 
 
 class PortfolioSnapshot(Base):

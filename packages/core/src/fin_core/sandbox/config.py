@@ -17,6 +17,9 @@ def _default_path() -> Path:
     raise FileNotFoundError("config/sandbox.yml not found")
 
 
+BUYABLE_KINDS = ("buy", "emerging")  # signal kinds that may open a position
+
+
 @dataclass(frozen=True)
 class SandboxConfig:
     position_pct: float = 0.20
@@ -26,14 +29,19 @@ class SandboxConfig:
     fee_bps: float = 0.0
 
     def __post_init__(self) -> None:
+        if isinstance(self.buy_kinds, str) or not self.buy_kinds:
+            raise ValueError("buy_kinds must be a non-empty list")
+        bad = set(self.buy_kinds) - set(BUYABLE_KINDS)
+        if bad:
+            raise ValueError(f"buy_kinds may only contain {list(BUYABLE_KINDS)}, not {sorted(bad)}")
         if not 0 < self.position_pct <= 1:
             raise ValueError("position_pct must be in (0, 1]")
         if not 0 <= self.min_cash_pct < 1:
             raise ValueError("min_cash_pct must be in [0, 1)")
         if self.max_positions < 1:
             raise ValueError("max_positions must be at least 1")
-        if self.fee_bps < 0:
-            raise ValueError("fee_bps must not be negative")
+        if not 0 <= self.fee_bps <= 1000:
+            raise ValueError("fee_bps must be between 0 and 1000")
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> SandboxConfig:
@@ -42,7 +50,15 @@ class SandboxConfig:
             raise ValueError(f"unknown sandbox fields: {sorted(unknown)}")
         raw = dict(raw)
         if "buy_kinds" in raw:
-            raw["buy_kinds"] = tuple(raw["buy_kinds"])
+            kinds = raw["buy_kinds"]
+            if isinstance(kinds, str) or not isinstance(kinds, list | tuple):
+                raise ValueError("buy_kinds must be a list")
+            raw["buy_kinds"] = tuple(kinds)
+        for key in ("position_pct", "min_cash_pct", "fee_bps"):
+            if key in raw:
+                raw[key] = float(raw[key])
+        if "max_positions" in raw:
+            raw["max_positions"] = int(raw["max_positions"])
         return cls(**raw)
 
     @classmethod

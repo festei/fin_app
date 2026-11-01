@@ -6,10 +6,11 @@ from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from fin_api.main import app, dispose_engines
 from fin_core.db import migrate, repo
-from fin_core.db.models import Portfolio
+from fin_core.db.models import Portfolio, PriceBar, SandboxOrder
 from fin_core.db.session import make_engine, session_scope
 from fin_core.sandbox import engine as sandbox
 
@@ -179,19 +180,19 @@ def test_position_pnl_uses_the_latest_close(db):
     with session_scope(db) as s:
         p = s.get(Portfolio, pid)
         p.cash = 900
-        from fin_core.db.models import SandboxPosition
-
-        s.add(SandboxPosition(portfolio_id=pid, security_id=repo.get_security(s, "AAA").id,
-                              quantity=10, avg_cost=10))  # fmt: skip
+        sec = repo.get_security(s, "AAA")
+        bar = s.scalars(
+            select(PriceBar).where(PriceBar.security_id == sec.id).order_by(PriceBar.ts)
+        ).first()
+        s.add(SandboxOrder(
+            portfolio_id=pid, security_id=sec.id, side="buy", quantity=10, status="filled",
+            created_at=bar.ts, filled_at=bar.ts, fill_quantity=10, fill_price=10, fee=0,
+        ))  # fmt: skip
     d = client.get(f"/api/portfolios/{pid}").json()
     pos = d["positions"][0]
-    assert (pos["price"], pos["market_value"], pos["pnl"], pos["pnl_pct"]) == (
-        15.0,
-        150.0,
-        50.0,
-        50.0,
-    )
-    assert (d["positions_value"], d["total_value"], d["return_pct"]) == (150.0, 1050.0, 5.0)
+    assert (pos["price"], pos["market_value"], pos["pnl"]) == (15.0, 150.0, 50.0)
+    assert (pos["pnl_pct"], d["positions_value"], d["total_value"]) == (50.0, 150.0, 1050.0)
+    assert d["return_pct"] == 5.0
 
 
 @pytest.mark.parametrize(
@@ -213,3 +214,43 @@ def test_503_without_a_database(monkeypatch):
         monkeypatch.delenv(k, raising=False)
     assert client.get("/api/portfolios").status_code == 503
     assert date  # keep the import used
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '{"ticker": "AAA", "side": "buy", "quantity": NaN}',
+        '{"ticker": "AAA", "side": "buy", "notional": Infinity}',
+        '{"ticker": "AAA", "side": "buy", "quantity": 1e30}',
+        '{"ticker": "AAA", "side": "buy", "notional": 1e30}',
+        '{"ticker": "AAA", "side": "buy", "quantity": -1}',
+    ],
+)
+def test_nonsense_order_sizes_are_422_not_500(db, raw):
+    pid = new_portfolio()["id"]
+    r = client.post(
+        f"/api/portfolios/{pid}/orders", content=raw, headers={"Content-Type": "application/json"}
+    )
+    assert r.status_code == 422
+
+
+BAD_PORTFOLIOS = [
+    '{"name": "x", "mode": "manual", "cash": NaN}',
+    '{"name": "x", "mode": "manual", "cash": 1e30}',
+    '{"name": "x", "mode": "manual", "cash": 5, "fee_bps": Infinity}',
+]
+
+
+@pytest.mark.parametrize("raw", BAD_PORTFOLIOS)
+def test_nonsense_portfolio_numbers_are_422(db, raw):
+    r = client.post("/api/portfolios", content=raw, headers={"Content-Type": "application/json"})
+    assert r.status_code == 422
+
+
+@pytest.mark.parametrize("kinds", [["sell"], "buy", [], ["buy", "bogus"]])
+def test_bad_buy_kinds_are_422(db, kinds):
+    r = client.post(
+        "/api/portfolios",
+        json={"name": "x", "mode": "strategy", "cash": 5, "strategy": {"buy_kinds": kinds}},
+    )
+    assert r.status_code == 422
