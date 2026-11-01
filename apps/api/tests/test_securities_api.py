@@ -63,23 +63,46 @@ def test_search_by_ticker_prefix_name_sector_and_kind(db):
     assert client.get("/api/securities?q=zzz").json() == []
 
 
-def test_search_flags_the_watchlist_and_ignores_like_wildcards(db):
+def test_search_flags_the_watchlist_and_matches_special_characters_literally(db):
     rows = {x["ticker"]: x for x in client.get("/api/securities").json()}
     assert rows["MSFT"]["watched"] is True and rows["AAPL"]["watched"] is False
     assert rows["TLT"]["kind"] == "etf"
-    assert client.get("/api/securities?q=%25").json() != []  # '%' is not a wildcard
-    assert tickers(client.get("/api/securities?q=_")) == tickers(client.get("/api/securities?q="))
+    with session_scope(db) as s:
+        repo.upsert_securities(s, [{"ticker": "BRK-B", "name": "100% Real_Co\\X"}])
+    for q, expected in [
+        ("%", ["BRK-B"]),  # only the name that contains a literal percent sign
+        ("_", ["BRK-B"]),
+        ("100%", ["BRK-B"]),
+        ("Real_Co", ["BRK-B"]),
+        ("o\\", ["BRK-B"]),  # a backslash is ordinary text, not an escape that matches nothing
+        ("a\\", []),
+        ("100_", []),  # underscore is not "any single character"
+        ("%%", []),
+    ]:
+        assert tickers(client.get("/api/securities", params={"q": q})) == expected, q
+    assert tickers(client.get("/api/securities?q=%20")) == tickers(client.get("/api/securities"))
+
+
+def test_an_unknown_kind_is_a_422_not_an_empty_list(db):
+    assert client.get("/api/securities?kind=etff").status_code == 422
+
+
+def test_inactive_securities_are_not_listed_but_their_history_is_served(db):
+    add_bars(db, "OLD", 3)
+    assert "OLD" not in tickers(client.get("/api/securities?q=old"))
+    assert len(client.get("/api/securities/OLD/prices").json()) == 3
+    assert client.get("/api/securities/OLD/scores").status_code == 200
 
 
 def add_bars(engine, ticker, n):
-    today = datetime.now(UTC).replace(hour=21, minute=0, second=0, microsecond=0)
+    now = datetime.now(UTC)  # bar k days back sits 1h before "now - k days": no time-of-day edge
     with session_scope(engine) as s:
         repo.upsert_prices(
             s,
             repo.get_security(s, ticker).id,
             [
-                {"ts": today - timedelta(days=n - 1 - i), "open": i, "high": i, "low": i,
-                 "close": float(i + 1), "volume": 10}
+                {"ts": now - timedelta(days=n - 1 - i, hours=1), "open": i, "high": i + 0.5,
+                 "low": i - 0.5, "close": float(i + 1), "volume": 10}
                 for i in range(n)
             ],
         )  # fmt: skip
@@ -89,18 +112,29 @@ def test_prices_are_oldest_first_within_the_window(db):
     add_bars(db, "AAPL", 30)
     r = client.get("/api/securities/aapl/prices?days=10")
     bars = r.json()
-    assert r.status_code == 200 and 9 <= len(bars) <= 11
+    assert r.status_code == 200 and len(bars) == 10
     assert [b["ts"] for b in bars] == sorted(b["ts"] for b in bars)
     assert bars[-1]["close"] == 30.0 and set(bars[0]) == {
         "ts", "open", "high", "low", "close", "volume",
     }  # fmt: skip
 
 
-def test_prices_are_thinned_but_keep_the_newest_bar(db):
-    add_bars(db, "AAPL", 100)
+def test_thinned_prices_are_candles_that_keep_the_true_extremes(db):
+    add_bars(db, "AAPL", 100)  # bar i: open i, high i+0.5, low i-0.5, close i+1, volume 10
     bars = client.get("/api/securities/AAPL/prices?days=400&max_points=10").json()
-    assert 5 <= len(bars) <= 10 and bars[-1]["close"] == 100.0
-    assert len(client.get("/api/securities/AAPL/prices?days=400").json()) == 100
+    assert len(bars) == 10 and bars[-1]["close"] == 100.0  # the newest bar ends the last candle
+    first, last = bars[0], bars[-1]
+    assert (first["open"], first["low"], first["high"], first["close"]) == (0, -0.5, 9.5, 10.0)
+    assert (last["open"], last["low"], last["high"]) == (90, 89.5, 99.5)
+    assert all(b["volume"] == 100 for b in bars)  # ten bars of 10
+    assert len(client.get("/api/securities/AAPL/prices?days=400").json()) == 100  # not thinned
+
+
+def test_uneven_buckets_still_end_on_the_newest_bar(db):
+    add_bars(db, "AAPL", 25)
+    bars = client.get("/api/securities/AAPL/prices?days=400&max_points=10").json()
+    assert len(bars) <= 10 and bars[-1]["close"] == 25.0
+    assert sum(b["volume"] for b in bars) == 250  # nothing lost
 
 
 def test_prices_and_scores_404_for_unknown_tickers(db):
@@ -134,6 +168,28 @@ def test_score_history_includes_flagged_gaps_and_signals(db):
     ]  # fmt: skip
     assert [(x["kind"], x["conviction"]) for x in body["signals"]] == [("emerging", 75.0)]
     assert client.get("/api/securities/MSFT/scores").json() == {"scores": [], "signals": []}
+
+
+def test_signals_outside_the_returned_score_window_are_dropped(db):
+    now = datetime.now(UTC)
+    with session_scope(db) as s:
+        sid = repo.get_security(s, "AAPL").id
+        ids = []
+        for i in range(4):  # oldest first: as_of = 4, 3, 2, 1 days ago
+            score = signals_repo.insert_score(
+                s, security_id=sid, as_of=now - timedelta(days=4 - i), conviction=50.0 + i,
+                all_abstained=False, signal_blocked=False, explanation="", details={},
+            )  # fmt: skip
+            signals_repo.insert_signal(
+                s, security_id=sid, score_id=score.id, kind="buy", conviction=50.0 + i,
+                as_of=now - timedelta(days=4 - i), reason="",
+            )  # fmt: skip
+            ids.append(score.id)
+    full = client.get("/api/securities/AAPL/scores").json()
+    assert len(full["scores"]) == 4 and len(full["signals"]) == 4
+    cut = client.get("/api/securities/AAPL/scores?limit=2").json()
+    assert [p["conviction"] for p in cut["scores"]] == [52.0, 53.0]
+    assert [x["conviction"] for x in cut["signals"]] == [52.0, 53.0]  # none before the window
 
 
 def test_503_without_a_database(monkeypatch):
