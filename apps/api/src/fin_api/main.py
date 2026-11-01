@@ -8,12 +8,14 @@ from contextlib import asynccontextmanager, contextmanager
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from functools import lru_cache
+from types import SimpleNamespace
+from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import Engine, select, text
+from sqlalchemy import Engine, or_, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -23,8 +25,11 @@ from fin_core.db import repo, signals_repo
 from fin_core.db.models import (
     Portfolio,
     PortfolioSnapshot,
+    PriceBar,
     SandboxOrder,
+    ScoreRecord,
     Security,
+    SignalRecord,
 )
 from fin_core.db.session import database_configured, database_url, make_engine, session_scope
 from fin_core.features import FeatureFlags
@@ -372,6 +377,194 @@ def channels() -> list[dict[str, object]]:
             "muted_until": muted.get("telegram"),
         },
     ]
+
+
+# --- securities: search, price history, score history ---------------------------------------------
+
+
+class SecurityOut(BaseModel):
+    ticker: str
+    name: str | None
+    sector: str | None
+    kind: str  # stock | etf
+    watched: bool
+
+
+class BarOut(BaseModel):
+    ts: str
+    open: float | None
+    high: float | None
+    low: float | None
+    close: float
+    volume: int | None
+
+
+class ScorePoint(BaseModel):
+    computed_at: str | None  # when the job ran
+    as_of: str  # the scoring date (end of day, UTC): plot against this
+    conviction: float | None  # None = nothing could be evaluated (not a score of 0)
+    signal_blocked: bool  # computed on stale or missing data; no signal was possible
+    all_abstained: bool
+
+
+class SignalPoint(BaseModel):
+    kind: str
+    conviction: float
+    as_of: str
+
+
+class ScoreHistory(BaseModel):
+    scores: list[ScorePoint]
+    signals: list[SignalPoint]  # transitions, for chart markers
+
+
+def _security(s: Session, ticker: str) -> Security:
+    sec = repo.get_security(s, ticker)
+    if sec is None:
+        raise HTTPException(404, detail=f"unknown ticker {ticker.upper()}")
+    return sec
+
+
+def _like_escape(text_: str) -> str:
+    """Make user text match literally inside LIKE: escape the escape character, % and _."""
+    return text_.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+@app.get("/api/securities", response_model=list[SecurityOut])
+def list_securities(
+    q: str | None = Query(None, max_length=50),
+    sector: str | None = Query(None, max_length=100),
+    kind: Literal["stock", "etf"] | None = None,
+    limit: int = Query(50, ge=1, le=500),
+) -> list[SecurityOut]:
+    """Search the active universe by ticker prefix or name fragment (case-insensitive, matched
+    literally: ``%``, ``_`` and ``\\`` are ordinary characters), optionally by sector or kind.
+    Inactive securities are not listed, but their history stays readable by ticker."""
+    with _db() as s:
+        query = select(Security).where(Security.active.is_(True))
+        if q and q.strip():
+            like = _like_escape(q.strip())
+            query = query.where(
+                or_(
+                    Security.ticker.ilike(f"{like}%", escape="\\"),
+                    Security.name.ilike(f"%{like}%", escape="\\"),
+                )
+            )
+        if sector:
+            query = query.where(Security.sector == sector)
+        if kind:
+            query = query.where(Security.kind == kind)
+        rows = s.scalars(query.order_by(Security.ticker).limit(limit)).all()
+        watched = set(signals_repo.watchlist_tickers(s))
+        return [
+            SecurityOut(
+                ticker=r.ticker,
+                name=r.name,
+                sector=r.sector,
+                kind=r.kind,
+                watched=r.ticker in watched,
+            )
+            for r in rows
+        ]
+
+
+@app.get("/api/securities/{ticker}/prices", response_model=list[BarOut])
+def security_prices(
+    ticker: str,
+    days: int = Query(365, ge=1, le=20000),
+    max_points: int = Query(1000, ge=10, le=5000),
+) -> list[BarOut]:
+    """Daily bars for the last ``days`` days, oldest first. With more than ``max_points`` bars,
+    consecutive bars are merged into candles (first open, max high, min low, last close, summed
+    volume), so the result is valid for candlestick and high/low charts as well as close lines.
+    Stored prices are split/dividend-adjusted. Inactive securities are still served."""
+    since = datetime.now(UTC) - timedelta(days=days)
+    with _db() as s:
+        sec = _security(s, ticker)
+        bars = s.scalars(
+            select(PriceBar)
+            .where(PriceBar.security_id == sec.id, PriceBar.ts >= since)
+            .order_by(PriceBar.ts)
+        ).all()
+    if len(bars) > max_points:
+        bars = _aggregate(bars, -(-len(bars) // max_points))
+    return [
+        BarOut(
+            ts=b.ts.isoformat(),
+            open=b.open,
+            high=b.high,
+            low=b.low,
+            close=b.close,
+            volume=b.volume,
+        )
+        for b in bars
+    ]
+
+
+def _aggregate(bars: list[PriceBar], step: int) -> list[SimpleNamespace]:
+    """Merge every ``step`` consecutive bars into one candle (first open, highest high, lowest
+    low, last close, summed volume, timestamp of the last bar). Buckets are counted from the
+    newest bar, so the latest candle ends on the latest bar and a candlestick or band chart keeps
+    the true extremes."""
+    out = []
+    for end in range(len(bars), 0, -step):
+        group = bars[max(0, end - step) : end]
+        highs = [b.high for b in group if b.high is not None]
+        lows = [b.low for b in group if b.low is not None]
+        volumes = [b.volume for b in group if b.volume is not None]
+        out.append(
+            SimpleNamespace(
+                ts=group[-1].ts,
+                open=group[0].open,
+                high=max(highs) if highs else None,
+                low=min(lows) if lows else None,
+                close=group[-1].close,
+                volume=sum(volumes) if volumes else None,
+            )
+        )
+    return out[::-1]
+
+
+@app.get("/api/securities/{ticker}/scores", response_model=ScoreHistory)
+def security_scores(
+    ticker: str, days: int = Query(365, ge=1, le=20000), limit: int = Query(1000, ge=1, le=5000)
+) -> ScoreHistory:
+    """Stored scores (oldest first) and the signals they produced, for the conviction chart.
+    Blocked and all-abstained runs are included but flagged, so a gap is visible as a gap. Plot
+    against ``as_of`` (the scoring date), not ``computed_at`` (when the job ran). Inactive
+    securities are still served."""
+    since = datetime.now(UTC) - timedelta(days=days)
+    with _db() as s:
+        sec = _security(s, ticker)
+        scores = s.scalars(
+            select(ScoreRecord)
+            .where(ScoreRecord.security_id == sec.id, ScoreRecord.computed_at >= since)
+            .order_by(ScoreRecord.computed_at.desc(), ScoreRecord.id.desc())
+            .limit(limit)
+        ).all()[::-1]
+        # markers only inside the returned window: if `limit` cut off older scores, so are signals
+        floor = scores[0].as_of if len(scores) == limit else since
+        signals = s.scalars(
+            select(SignalRecord)
+            .where(SignalRecord.security_id == sec.id, SignalRecord.as_of >= floor)
+            .order_by(SignalRecord.id)
+        ).all()
+        return ScoreHistory(
+            scores=[
+                ScorePoint(
+                    computed_at=_iso(r.computed_at),
+                    as_of=r.as_of.isoformat(),
+                    conviction=r.conviction,
+                    signal_blocked=r.signal_blocked,
+                    all_abstained=r.all_abstained,
+                )
+                for r in scores
+            ],
+            signals=[
+                SignalPoint(kind=x.kind, conviction=x.conviction, as_of=x.as_of.isoformat())
+                for x in signals
+            ],
+        )
 
 
 # --- paper-trading sandbox ---------------------------------------------------------------------

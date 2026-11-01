@@ -80,7 +80,7 @@ RUN_LIVE_TESTS=1 SEC_USER_AGENT="Your Name you@example.com" FRED_API_KEY=... uv 
 
 Scoring runs as the last step of the daily pipeline (`score-universe` flow, or `fin_core.scoring_run.run_scoring`). Every run is stored in `scores`; a *transition* (conviction crossing the buy or sell line relative to the last actionable stored score) creates a `signals` row, which `config/alerts.yml` turns into an alert: sells only for watchlist stocks, with a cooldown unless conviction moved materially.
 
-* In-app feed, always on: `GET /api/alerts`, `POST /api/alerts/{id}/read`, `GET /api/opportunities`, `GET|PUT|DELETE /api/watchlist`, `GET /api/channels`. The state-changing calls (watchlist PUT/DELETE, mark-as-read) need `Authorization: Bearer $API_TOKEN`; without `API_TOKEN` configured they return 503. `/api/opportunities` ignores scores older than `max_age_days` (default 10).
+* In-app feed, always on: `GET /api/alerts`, `POST /api/alerts/{id}/read`, `GET /api/opportunities`, `GET|PUT|DELETE /api/watchlist`, `GET /api/channels`, `GET /api/securities` (search), `GET /api/securities/{ticker}/prices` and `/scores` (chart data). The state-changing calls (watchlist PUT/DELETE, mark-as-read) need `Authorization: Bearer $API_TOKEN`; without `API_TOKEN` configured they return 503. `/api/opportunities` ignores scores older than `max_age_days` (default 10).
 * Telegram, **off by default**: set `FEATURE_TELEGRAM_ENABLED=true` plus `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` and run the worker (`python -m fin_api.worker`). Commands: `/watch`, `/unwatch`, `/watchlist`, `/top`, `/why`, `/mute`, `/unmute`, `/help`. Verified only against a mocked Bot API so far.
 
 ## Feature flags
