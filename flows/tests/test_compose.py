@@ -36,3 +36,25 @@ def test_python_m_commands_name_importable_modules(compose):
 def test_flows_service_serves_the_ingestion_schedules(compose):
     assert ("flows", "fin_flows.serve") in python_modules(compose)
     assert re.search(r"__main__", (ROOT / "flows/fin_flows/serve.py").read_text())
+
+
+def test_web_proxy_adds_the_api_token_and_requires_basic_auth_in_prod():
+    """The browser must never hold the write token: nginx adds it, and prod puts the UI behind
+    basic auth (real nginx behaviour is not exercised by these tests)."""
+    template = (ROOT / "deploy/nginx.conf.template").read_text()
+    assert 'proxy_set_header Authorization "Bearer ${API_TOKEN}";' in template
+    assert 'auth_basic "${AUTH_BASIC}";' in template and "auth_basic_user_file" in template
+    health = template.split("location = /healthz")[1].split("}")[0]
+    assert "auth_basic off;" in health  # only the health check skips auth
+    assert (
+        "COPY deploy/nginx.conf.template /etc/nginx/templates/"
+        in (ROOT / "deploy/web.Dockerfile").read_text()
+    )
+    dev = yaml.safe_load((ROOT / "deploy/docker-compose.yml").read_text())["services"]["web"]
+    prod = yaml.safe_load((ROOT / "deploy/docker-compose.prod.yml").read_text())["services"]["web"]
+    assert dev["environment"]["AUTH_BASIC"] == "off"
+    assert prod["environment"]["AUTH_BASIC"] != "off"
+    assert "${API_TOKEN:?" in prod["environment"]["API_TOKEN"]
+    assert any(v.startswith("${HTPASSWD_FILE:?") for v in prod["volumes"])
+    for compose in (dev, prod):  # web and api must be given the same token variable
+        assert "API_TOKEN" in compose["environment"]

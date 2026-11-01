@@ -83,6 +83,13 @@ services:
     image: fin-web:${TAG:?set TAG}
     restart: always
     ports: ["80:8080"]
+    environment:
+      API_TOKEN: ${API_TOKEN:?set API_TOKEN}   # same value as the api service; added by nginx
+      AUTH_BASIC: fin-app
+    volumes:
+      # htpasswd file for the single user (e.g. `htpasswd -B -c htpasswd me`); without it nginx
+      # answers 500 instead of serving anything
+      - ${HTPASSWD_FILE:?set HTPASSWD_FILE}:/etc/nginx/htpasswd:ro
     depends_on: { api: { condition: service_healthy } }
     deploy: { resources: { limits: { memory: 128m } } }
 

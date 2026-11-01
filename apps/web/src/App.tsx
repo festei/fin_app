@@ -1,30 +1,24 @@
-import { useQuery } from "@tanstack/react-query";
-import { fetchFeatures } from "./api";
+import { Route, Routes } from "react-router-dom";
+import { Layout } from "./components/Layout";
+import { Alerts } from "./pages/Alerts";
+import { Opportunities } from "./pages/Opportunities";
+import { PortfolioPage } from "./pages/Portfolio";
+import { Sandbox } from "./pages/Sandbox";
+import { SecurityPage } from "./pages/Security";
+import { Settings } from "./pages/Settings";
 
 export function App() {
-  const features = useQuery({ queryKey: ["features"], queryFn: fetchFeatures });
-
   return (
-    <main className="shell">
-      <h1>fin-app</h1>
-      <p className="muted">
-        Opportunity scanner. Screener, security detail, bonds and sandbox arrive in later phases.
-      </p>
-      <section>
-        <h2>Feature flags</h2>
-        {features.isLoading && <p>Loading…</p>}
-        {features.isError && <p role="alert">API unreachable.</p>}
-        {features.data && (
-          <ul>
-            {Object.entries(features.data).map(([name, on]) => (
-              <li key={name}>
-                {name}: <strong>{on ? "on" : "off"}</strong>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-      <footer className="muted">Not investment advice.</footer>
-    </main>
+    <Routes>
+      <Route element={<Layout />}>
+        <Route index element={<Opportunities />} />
+        <Route path="security/:ticker" element={<SecurityPage />} />
+        <Route path="alerts" element={<Alerts />} />
+        <Route path="sandbox" element={<Sandbox />} />
+        <Route path="sandbox/:id" element={<PortfolioPage />} />
+        <Route path="settings" element={<Settings />} />
+        <Route path="*" element={<p className="empty">Page not found.</p>} />
+      </Route>
+    </Routes>
   );
 }

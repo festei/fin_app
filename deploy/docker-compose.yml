@@ -87,6 +87,9 @@ services:
   web:
     build: { context: .., dockerfile: deploy/web.Dockerfile }
     ports: ["8080:8080"]
+    environment:
+      API_TOKEN: ${API_TOKEN:-dev-token}   # same value as the api service; added by nginx
+      AUTH_BASIC: "off"                    # dev only; prod compose turns basic auth on
     depends_on: [api]
 
 volumes:
