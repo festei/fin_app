@@ -52,7 +52,9 @@ services:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/readyz')"]
       interval: 15s
       retries: 5
-    environment: *dbenv
+    environment:
+      <<: *dbenv
+      API_TOKEN: ${API_TOKEN:?set API_TOKEN}
     depends_on: { migrate: { condition: service_completed_successfully } }
     deploy: { resources: { limits: { memory: 512m } } }
 
@@ -68,7 +70,7 @@ services:
   flows:
     <<: *common
     image: fin-flows:${TAG:?set TAG}
-    command: python -m fin_flows.ingestion
+    command: python -m fin_flows.serve
     environment:
       <<: *dbenv
       PREFECT_API_URL: http://prefect:4200/api

@@ -17,6 +17,8 @@ def score_security(
     as_of: date | datetime,
     *,
     previous_conviction: float | None = None,
+    buy_armed: bool = True,
+    sell_armed: bool = True,
     graph: Any = None,
     config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -29,5 +31,7 @@ def score_security(
             "metrics": metrics,
             "config": config or load_config(),
             "previous_conviction": previous_conviction,
+            "buy_armed": buy_armed,
+            "sell_armed": sell_armed,
         }
     )

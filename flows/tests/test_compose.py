@@ -34,5 +34,5 @@ def test_python_m_commands_name_importable_modules(compose):
 
 @pytest.mark.parametrize("compose", ["docker-compose.yml", "docker-compose.prod.yml"])
 def test_flows_service_serves_the_ingestion_schedules(compose):
-    assert ("flows", "fin_flows.ingestion") in python_modules(compose)
-    assert re.search(r"__main__", (ROOT / "flows/fin_flows/ingestion.py").read_text())
+    assert ("flows", "fin_flows.serve") in python_modules(compose)
+    assert re.search(r"__main__", (ROOT / "flows/fin_flows/serve.py").read_text())

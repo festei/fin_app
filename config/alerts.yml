@@ -1,0 +1,13 @@
+# Alert policy: which signals become alerts, and how often. Channels (in-app, Telegram) are
+# chosen by feature flags, not here.
+alerts:
+  cooldown_hours: 24           # no repeat of the same kind for a stock within this window...
+  material_change: 10          # ...unless its conviction moved by at least this many points
+  sell_only_for_watchlist: true   # a sell on a stock you do not follow is mostly noise
+  max_delivery_attempts: 6
+  retry_backoff_minutes: [2, 10, 30, 120, 360]   # wait before attempt 2, 3, ... (last value repeats)
+  pending_timeout_minutes: 10   # an attempt "in flight" longer than this belongs to a dead process
+  severity:                    # by signal kind; watchlist stocks are always "high"
+    buy: high
+    sell: high
+    emerging: normal

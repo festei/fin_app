@@ -49,7 +49,9 @@ services:
       dockerfile: deploy/python.Dockerfile
       args: { PACKAGE: fin-api }
     command: uvicorn fin_api.main:app --host 0.0.0.0 --port 8000
-    environment: *dbenv
+    environment:
+      <<: *dbenv
+      API_TOKEN: ${API_TOKEN:-dev-token}   # dev default; write endpoints need it
     depends_on: { migrate: { condition: service_completed_successfully } }
     ports: ["8000:8000"]
     healthcheck:
@@ -74,7 +76,7 @@ services:
       context: ..
       dockerfile: deploy/python.Dockerfile
       args: { PACKAGE: fin-flows }
-    command: python -m fin_flows.ingestion
+    command: python -m fin_flows.serve
     environment:
       <<: *dbenv
       PREFECT_API_URL: http://prefect:4200/api
