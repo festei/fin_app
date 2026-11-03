@@ -18,12 +18,20 @@ from fin_application.ports import (
     Clock,
     FundamentalsSource,
     PriceSource,
+    SandboxConfigSource,
     ScoringConfigSource,
     ScoringEngine,
     SingleInstanceGuard,
     UnitOfWorkFactory,
     UniverseSource,
     YieldSource,
+)
+from fin_application.sandbox import (
+    CancelOrder,
+    CreatePortfolio,
+    PlaceOrder,
+    PortfolioReader,
+    RunSandbox,
 )
 from fin_application.scoring import ScoreSecurityLive
 from fin_application.scoring_run import RunScoring
@@ -36,6 +44,7 @@ from fin_config import (
     ConfigLocator,
     FeatureFlags,
     YamlAlertPolicy,
+    YamlSandboxConfig,
     YamlScoringConfig,
     YamlUniverseSource,
 )
@@ -72,6 +81,7 @@ class Container:
         scoring_engine: ScoringEngine | None = None,
         scoring_config: ScoringConfigSource | None = None,
         alert_policy: AlertPolicySource | None = None,
+        sandbox_config: SandboxConfigSource | None = None,
         flags: FeatureFlags | None = None,
         http_client: httpx.Client | None = None,
     ):
@@ -85,6 +95,7 @@ class Container:
         self._scoring_engine = scoring_engine
         self._scoring_config = scoring_config
         self._alert_policy = alert_policy
+        self._sandbox_config = sandbox_config
         self._flags = flags
         self._http_client = http_client
 
@@ -163,6 +174,12 @@ class Container:
         if self._alert_policy is None:
             self._alert_policy = YamlAlertPolicy(ConfigLocator(self.settings.config_dir))
         return self._alert_policy
+
+    @property
+    def sandbox_config(self) -> SandboxConfigSource:
+        if self._sandbox_config is None:
+            self._sandbox_config = YamlSandboxConfig(ConfigLocator(self.settings.config_dir))
+        return self._sandbox_config
 
     def channels(self) -> list[AlertChannel]:
         """The in-app feed, plus Telegram if its flag is on. Raises ``ChannelConfigError`` when
@@ -257,3 +274,23 @@ class Container:
         return BotCommands(
             self.uow_factory, self.watchlist, self.channel_service, self.opportunities
         )
+
+    @property
+    def create_portfolio(self) -> CreatePortfolio:
+        return CreatePortfolio(self.uow_factory, self.sandbox_config, self.clock)
+
+    @property
+    def place_order(self) -> PlaceOrder:
+        return PlaceOrder(self.uow_factory, self.clock)
+
+    @property
+    def cancel_order(self) -> CancelOrder:
+        return CancelOrder(self.uow_factory)
+
+    @property
+    def run_sandbox(self) -> RunSandbox:
+        return RunSandbox(self.uow_factory, self.job_runs, self.clock)
+
+    @property
+    def portfolio_reader(self) -> PortfolioReader:
+        return PortfolioReader(self.uow_factory, self.clock)

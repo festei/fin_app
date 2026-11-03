@@ -71,3 +71,11 @@ def test_migration_0003_marks_existing_signals_processed(tmp_path):
         ).one()
     eng.dispose()
     assert processed is not None and reason is None
+
+
+def test_migration_0004_round_trips(tmp_path):
+    url = f"sqlite:///{tmp_path / 'm.db'}"
+    migrate.upgrade(url)
+    migrate.downgrade(url, "0003")
+    migrate.upgrade(url)
+    create_engine(url).dispose()

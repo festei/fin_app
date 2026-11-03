@@ -242,9 +242,6 @@ ignore_imports = [
     "fin_api.main -> fin_core.db.repo",
     "fin_api.main -> fin_core.db.session",
     "fin_api.main -> fin_core.features",
-    "fin_api.main -> fin_core.sandbox.engine",
-    "fin_flows.sandbox -> fin_core.db.session",
-    "fin_flows.sandbox -> fin_core.sandbox.run",
 ]
 
 [[tool.importlinter.contracts]]

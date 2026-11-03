@@ -64,6 +64,14 @@ class InMemoryPriceRepository:
     def tickers_with_bars(self) -> set[Ticker]:
         return {t for t, bars in self.bars.items() if bars}
 
+    def close_at(self, ticker: Ticker, ts: datetime) -> float | None:
+        bar = self.bars.get(ticker, {}).get(ts)
+        return bar.close if bar else None
+
+    def first_bar_between(self, ticker: Ticker, start: datetime, end: datetime) -> PriceBar | None:
+        inside = [b for ts, b in self.bars.get(ticker, {}).items() if start <= ts <= end]
+        return min(inside, key=lambda b: b.ts, default=None)
+
     def closes_since(self, ticker: Ticker, since: datetime) -> Mapping[datetime, float]:
         return {ts: b.close for ts, b in self.bars.get(ticker, {}).items() if ts >= since}
 

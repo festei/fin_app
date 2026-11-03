@@ -24,18 +24,15 @@ from fin_bootstrap import Container, Settings
 from fin_core import __version__
 from fin_core.db import repo
 from fin_core.db.models import (
-    Portfolio,
-    PortfolioSnapshot,
     PriceBar,
-    SandboxOrder,
     ScoreRecord,
     Security,
     SignalRecord,
 )
 from fin_core.db.session import database_configured, database_url, make_engine, session_scope
 from fin_core.features import FeatureFlags
-from fin_core.sandbox import engine as sandbox
 from fin_domain.market_data import aggregate_candles
+from fin_domain.sandbox import OrderError
 from fin_domain.scoring import ScoreResult, SecurityMetrics
 from fin_domain.shared import NotFound
 from fin_domain.signals import Signal
@@ -668,40 +665,31 @@ def _iso(dt: datetime | None) -> str | None:
     return dt.isoformat() if dt else None
 
 
-def _portfolio(s: Session, portfolio_id: int) -> Portfolio:
-    p = s.get(Portfolio, portfolio_id)
-    if p is None:
-        raise HTTPException(404, detail=f"unknown portfolio {portfolio_id}")
-    return p
-
-
-def _view(s: Session, p: Portfolio, now: datetime) -> dict:
-    invested = sandbox.positions_value(s, p, now)
-    total = Decimal(p.cash) + invested
-    initial = Decimal(p.initial_cash)
+def _view(v) -> dict:
+    p = v.portfolio
     return {
         "id": p.id,
         "name": p.name,
-        "mode": p.mode,
-        "initial_cash": float(initial),
+        "mode": p.mode.value,
+        "initial_cash": float(p.initial_cash),
         "cash": float(p.cash),
-        "positions_value": float(invested),
-        "total_value": float(total),
-        "return_pct": float((total - initial) / initial * 100),
+        "positions_value": float(v.invested),
+        "total_value": float(v.total),
+        "return_pct": float(v.return_pct),
         "fee_bps": float(p.fee_bps),
-        "strategy_config": p.strategy_config,
+        "strategy_config": p.strategy.to_json() if p.strategy else None,
         "created_at": _iso(p.created_at),
     }
 
 
-def _order_out(o: SandboxOrder, ticker: str) -> OrderOut:
+def _order_out(o) -> OrderOut:
     return OrderOut(
         id=o.id,
-        ticker=ticker,
-        side=o.side,
+        ticker=str(o.ticker),
+        side=o.side.value,
         quantity=_f(o.quantity),
         notional=_f(o.notional),
-        status=o.status,
+        status=o.status.value,
         created_at=_iso(o.created_at) or "",
         filled_at=_iso(o.filled_at),
         fill_quantity=_f(o.fill_quantity),
@@ -712,11 +700,14 @@ def _order_out(o: SandboxOrder, ticker: str) -> OrderOut:
     )
 
 
+def _not_found(exc: NotFound) -> HTTPException:
+    return HTTPException(404, detail=f"unknown {exc.entity} {exc.key}")
+
+
 @app.get("/api/portfolios", response_model=list[PortfolioOut])
 def list_portfolios() -> list[dict]:
-    now = datetime.now(UTC)
-    with _db() as s:
-        return [_view(s, p, now) for p in s.scalars(select(Portfolio).order_by(Portfolio.id))]
+    with _app() as app_:
+        return [_view(v) for v in app_.portfolio_reader.list()]
 
 
 @app.post(
@@ -726,85 +717,72 @@ def list_portfolios() -> list[dict]:
     dependencies=[Depends(require_write_token)],
 )
 def create_portfolio(body: NewPortfolio) -> dict:
-    with _db() as s:
+    with _app() as app_:
         try:
-            p = sandbox.create_portfolio(
-                s,
+            view = app_.create_portfolio.execute(
                 body.name,
                 mode=body.mode,
                 cash=Decimal(str(body.cash)),
                 fee_bps=body.fee_bps,
                 strategy=body.strategy,
             )
-        except sandbox.OrderError as exc:
+        except OrderError as exc:
             raise HTTPException(422, detail=str(exc)) from None
-        return _view(s, p, datetime.now(UTC))
+        return _view(view)
 
 
 @app.get("/api/portfolios/{portfolio_id}", response_model=PortfolioDetail)
 def get_portfolio(portfolio_id: int) -> dict:
-    now = datetime.now(UTC)
-    with _db() as s:
-        p = _portfolio(s, portfolio_id)
-        rows = []
-        for h in sandbox.holdings(s, p.id).values():
-            sec = s.get(Security, h.security_id)
-            price = sandbox.last_close(s, h.security_id, now)
-            value = h.quantity * price if price is not None else h.cost
-            rows.append(
-                PositionOut(
-                    ticker=sec.ticker,
-                    name=sec.name,
-                    quantity=float(h.quantity),
-                    avg_cost=float(h.avg_cost),
-                    price=_f(price),
-                    market_value=float(value),
-                    pnl=float(value - h.cost),
-                    pnl_pct=float((value - h.cost) / h.cost * 100) if h.cost else None,
-                )
-            )
-        rows.sort(key=lambda r: r.ticker)
-        return {**_view(s, p, now), "positions": rows}
+    with _app() as app_:
+        try:
+            view, positions = app_.portfolio_reader.detail(portfolio_id)
+        except NotFound as exc:
+            raise _not_found(exc) from None
+    rows = [
+        PositionOut(
+            ticker=str(v.ticker),
+            name=v.name,
+            quantity=float(v.position.holding.quantity),
+            avg_cost=float(v.position.holding.avg_cost),
+            price=_f(v.position.price),
+            market_value=float(v.position.value),
+            pnl=float(v.pnl),
+            pnl_pct=_f(v.pnl_pct),
+        )
+        for v in positions
+    ]
+    return {**_view(view), "positions": rows}
 
 
 @app.get("/api/portfolios/{portfolio_id}/history", response_model=list[SnapshotOut])
 def portfolio_history(portfolio_id: int) -> list[SnapshotOut]:
     """The equity curve: one value row per day the sandbox step ran."""
-    with _db() as s:
-        _portfolio(s, portfolio_id)
-        rows = s.scalars(
-            select(PortfolioSnapshot)
-            .where(PortfolioSnapshot.portfolio_id == portfolio_id)
-            .order_by(PortfolioSnapshot.as_of)
+    with _app() as app_:
+        try:
+            rows = app_.portfolio_reader.history(portfolio_id)
+        except NotFound as exc:
+            raise _not_found(exc) from None
+    return [
+        SnapshotOut(
+            as_of=r.as_of.isoformat(),
+            cash=float(r.cash),
+            positions_value=float(r.positions_value),
+            total_value=float(r.total_value),
         )
-        return [
-            SnapshotOut(
-                as_of=r.as_of.isoformat(),
-                cash=float(r.cash),
-                positions_value=float(r.positions_value),
-                total_value=float(r.total_value),
-            )
-            for r in rows
-        ]
+        for r in rows
+    ]
 
 
 @app.get("/api/portfolios/{portfolio_id}/orders", response_model=list[OrderOut])
 def portfolio_orders(
     portfolio_id: int, status: str | None = None, limit: int = Query(100, ge=1, le=500)
 ) -> list[OrderOut]:
-    with _db() as s:
-        _portfolio(s, portfolio_id)
-        q = select(SandboxOrder).where(SandboxOrder.portfolio_id == portfolio_id)
-        if status:
-            q = q.where(SandboxOrder.status == status)
-        rows = s.scalars(q.order_by(SandboxOrder.id.desc()).limit(limit)).all()
-        ids = {o.security_id for o in rows}
-        tickers = (
-            {x.id: x.ticker for x in s.scalars(select(Security).where(Security.id.in_(ids)))}
-            if ids
-            else {}
-        )
-        return [_order_out(o, tickers[o.security_id]) for o in rows]
+    with _app() as app_:
+        try:
+            orders = app_.portfolio_reader.orders(portfolio_id, status, limit)
+        except NotFound as exc:
+            raise _not_found(exc) from None
+    return [_order_out(o) for o in orders]
 
 
 @app.post(
@@ -815,22 +793,21 @@ def portfolio_orders(
 )
 def place_order(portfolio_id: int, body: NewOrder) -> OrderOut:
     """Queue a simulated order; it fills at the first daily close after today (see
-    ``fin_core.sandbox.engine``). Manual portfolios only."""
-    with _db() as s:
+    ``fin_domain.sandbox.Portfolio``). Manual portfolios only."""
+    with _app() as app_:
         try:
-            o = sandbox.place_order(
-                s,
+            order = app_.place_order.execute(
                 portfolio_id,
                 body.ticker,
                 body.side,
                 quantity=None if body.quantity is None else Decimal(str(body.quantity)),
                 notional=None if body.notional is None else Decimal(str(body.notional)),
             )
-        except sandbox.UnknownError as exc:
-            raise HTTPException(404, detail=str(exc)) from None
-        except sandbox.OrderError as exc:
+        except NotFound as exc:
+            raise _not_found(exc) from None
+        except OrderError as exc:
             raise HTTPException(422, detail=str(exc)) from None
-        return _order_out(o, s.get(Security, o.security_id).ticker)
+        return _order_out(order)
 
 
 @app.delete(
@@ -838,8 +815,11 @@ def place_order(portfolio_id: int, body: NewOrder) -> OrderOut:
     dependencies=[Depends(require_write_token)],
 )
 def cancel_order(portfolio_id: int, order_id: int) -> dict[str, object]:
-    with _db() as s:
-        _portfolio(s, portfolio_id)
-        if not sandbox.cancel_order(s, portfolio_id, order_id, "cancelled by the user"):
+    with _app() as app_:
+        try:
+            cancelled = app_.cancel_order.execute(portfolio_id, order_id)
+        except NotFound as exc:
+            raise _not_found(exc) from None
+        if not cancelled:
             raise HTTPException(404, detail=f"no pending order {order_id} in this portfolio")
     return {"id": order_id, "cancelled": True}

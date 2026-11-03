@@ -8,6 +8,7 @@ from types import TracebackType
 from typing import Self
 
 from fin_domain.market_data import Fact, PriceBar, Security
+from fin_domain.sandbox import Portfolio, PortfolioSnapshot
 from fin_domain.shared import JobRun, Ticker
 from fin_domain.signals import Alert, ChannelState, ScoreEntry, StoredSignal
 from fin_testkit.clock import FakeClock
@@ -18,6 +19,7 @@ from fin_testkit.market_data import (
     InMemorySecurityRepository,
     InMemoryYieldRepository,
 )
+from fin_testkit.sandbox import InMemoryPortfolioRepository
 from fin_testkit.signals import (
     InMemoryAlertFeedQuery,
     InMemoryAlertRepository,
@@ -43,6 +45,8 @@ class InMemoryState:
     watched: set[Ticker] = field(default_factory=set)
     channels: dict[str, ChannelState] = field(default_factory=dict)
     cursors: dict[str, int] = field(default_factory=dict)
+    portfolios: dict[int, Portfolio] = field(default_factory=dict)
+    snapshots: dict[tuple[int, date], PortfolioSnapshot] = field(default_factory=dict)
 
 
 class InMemoryStore:
@@ -90,6 +94,14 @@ class InMemoryStore:
         return self.state.watched
 
     @property
+    def portfolios(self) -> dict[int, Portfolio]:
+        return self.state.portfolios
+
+    @property
+    def snapshots(self) -> dict[tuple[int, date], PortfolioSnapshot]:
+        return self.state.snapshots
+
+    @property
     def channels(self) -> dict[str, ChannelState]:
         return self.state.channels
 
@@ -118,6 +130,9 @@ class InMemoryUnitOfWork:
         self.cursors = InMemoryBotCursorStore(work.cursors)
         self.opportunities = InMemoryOpportunityQuery(work.scores, work.securities)
         self.alert_feed = InMemoryAlertFeedQuery(work.alerts)
+        self.portfolios = InMemoryPortfolioRepository(
+            work.portfolios, work.snapshots, work.securities
+        )
 
     def __enter__(self) -> Self:
         self._bind(deepcopy(self._store.state))

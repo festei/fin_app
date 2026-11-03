@@ -47,6 +47,14 @@ class PriceRepository(Protocol):
 
     def tickers_with_bars(self) -> set[Ticker]: ...
 
+    def close_at(self, ticker: Ticker, ts: datetime) -> float | None:
+        """The stored close of the bar at exactly ``ts`` (``None`` if there is none)."""
+        ...
+
+    def first_bar_between(self, ticker: Ticker, start: datetime, end: datetime) -> PriceBar | None:
+        """The first bar with ``start <= ts <= end``."""
+        ...
+
     def closes_since(self, ticker: Ticker, since: datetime) -> Mapping[datetime, float]:
         """Stored closes of the bars at or after ``since``, by timestamp."""
         ...

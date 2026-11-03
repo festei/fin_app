@@ -48,6 +48,17 @@ def _security(row: SecurityRow) -> Security:
     )
 
 
+def _bar(row) -> PriceBar:
+    return PriceBar(
+        ts=aware(row.ts),
+        close=row.close,
+        open=row.open,
+        high=row.high,
+        low=row.low,
+        volume=row.volume,
+    )
+
+
 class SqlSecurityRepository:
     def __init__(self, session: Session):
         self._session = session
@@ -106,16 +117,7 @@ class SqlPriceRepository:
     def latest(self, ticker: Ticker, as_of: datetime | None = None) -> PriceBar | None:
         sid = _security_row(self._session, ticker).id
         row = repo.latest_price(self._session, sid, as_of)
-        if row is None:
-            return None
-        return PriceBar(
-            ts=aware(row.ts),
-            close=row.close,
-            open=row.open,
-            high=row.high,
-            low=row.low,
-            volume=row.volume,
-        )
+        return _bar(row) if row else None
 
     def tickers_with_bars(self) -> set[Ticker]:
         with_bars = select(PriceBarRow.security_id).distinct()
@@ -123,6 +125,22 @@ class SqlPriceRepository:
             select(SecurityRow.ticker).where(SecurityRow.id.in_(with_bars))
         )
         return {Ticker(t) for t in rows}
+
+    def close_at(self, ticker: Ticker, ts: datetime) -> float | None:
+        sid = _security_row(self._session, ticker).id
+        return self._session.scalar(
+            select(PriceBarRow.close).where(PriceBarRow.security_id == sid, PriceBarRow.ts == ts)
+        )
+
+    def first_bar_between(self, ticker: Ticker, start: datetime, end: datetime) -> PriceBar | None:
+        sid = _security_row(self._session, ticker).id
+        row = self._session.scalar(
+            select(PriceBarRow)
+            .where(PriceBarRow.security_id == sid, PriceBarRow.ts >= start, PriceBarRow.ts <= end)
+            .order_by(PriceBarRow.ts)
+            .limit(1)
+        )
+        return _bar(row) if row else None
 
     def closes_since(self, ticker: Ticker, since: datetime) -> Mapping[datetime, float]:
         sid = _security_row(self._session, ticker).id

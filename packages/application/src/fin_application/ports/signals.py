@@ -50,6 +50,14 @@ class SignalRepository(Protocol):
 
     def get(self, signal_id: int) -> StoredSignal | None: ...
 
+    def after(self, signal_id: int) -> list[StoredSignal]:
+        """Signals stored after ``signal_id``, oldest first."""
+        ...
+
+    def latest_id(self) -> int:
+        """The newest signal's id, or 0 if there is none."""
+        ...
+
     def pending_ids(self) -> list[int]:
         """Signals whose alert decision is still owed (an interrupted run left them)."""
         ...

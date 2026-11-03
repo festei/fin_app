@@ -94,6 +94,12 @@ class InMemorySignalRepository:
         found = self.signals.get(signal_id)
         return deepcopy(found) if found else None
 
+    def after(self, signal_id: int) -> list[StoredSignal]:
+        return [deepcopy(s) for i, s in sorted(self.signals.items()) if i > signal_id]
+
+    def latest_id(self) -> int:
+        return max(self.signals, default=0)
+
     def pending_ids(self) -> list[int]:
         return sorted(i for i, s in self.signals.items() if s.is_pending)
 

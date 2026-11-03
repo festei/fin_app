@@ -186,6 +186,18 @@ class SqlSignalRepository:
         ).first()
         return self._stored(*found) if found else None
 
+    def after(self, signal_id: int) -> list[StoredSignal]:
+        rows = self._session.execute(
+            select(SignalRecord, SecurityRow.ticker)
+            .join(SecurityRow, SecurityRow.id == SignalRecord.security_id)
+            .where(SignalRecord.id > signal_id)
+            .order_by(SignalRecord.id)
+        ).all()
+        return [self._stored(r, t) for r, t in rows]
+
+    def latest_id(self) -> int:
+        return self._session.scalar(select(func.max(SignalRecord.id))) or 0
+
     def pending_ids(self) -> list[int]:
         q = select(SignalRecord.id).where(SignalRecord.processed_at.is_(None))
         return list(self._session.scalars(q.order_by(SignalRecord.id)))

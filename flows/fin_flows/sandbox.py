@@ -1,16 +1,25 @@
-"""Scheduled sandbox step: strategy portfolios act on new signals, pending orders fill at the
-next daily close, and every portfolio's value is snapshotted. All logic is in
-``fin_core.sandbox.run``."""
+"""The nightly sandbox step: strategies read new signals, orders settle, values are snapshotted.
+
+All the logic is ``fin_application.sandbox.RunSandbox``; this is the Prefect wrapper that fails the
+flow run when the whole run failed.
+"""
 
 from __future__ import annotations
 
 from prefect import flow
 
-from fin_core.db.session import make_engine
-from fin_core.sandbox.run import run_sandbox
+from fin_bootstrap import Container
 from fin_flows.common import check_summary
+
+
+def _container() -> Container:  # indirection so tests can inject a container
+    return Container.from_environ()
 
 
 @flow(name="sandbox-step")
 def sandbox_step_flow() -> dict:
-    return check_summary(run_sandbox(make_engine()))
+    container = _container()
+    try:
+        return check_summary(container.run_sandbox.execute())
+    finally:
+        container.dispose()

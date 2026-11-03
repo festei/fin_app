@@ -9,6 +9,7 @@ from fin_testkit.market_data import (
     InMemorySecurityRepository,
     InMemoryYieldRepository,
 )
+from fin_testkit.sandbox import FixedSandboxConfig, InMemoryPortfolioRepository
 from fin_testkit.scoring import FakeScoringConfig, FakeScoringEngine
 from fin_testkit.signals import (
     InMemoryAlertFeedQuery,
@@ -43,11 +44,13 @@ __all__ = [
     "FakeUniverse",
     "FakeYieldSource",
     "FixedPolicy",
+    "FixedSandboxConfig",
     "InMemoryAlertFeedQuery",
     "InMemoryAlertRepository",
     "InMemoryBotCursorStore",
     "InMemoryChannelStateRepository",
     "InMemoryOpportunityQuery",
+    "InMemoryPortfolioRepository",
     "InMemoryScoreRepository",
     "InMemorySignalRepository",
     "InMemoryWatchlistRepository",

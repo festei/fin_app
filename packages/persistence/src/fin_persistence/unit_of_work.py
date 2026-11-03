@@ -15,6 +15,7 @@ from fin_persistence.market_data import (
     SqlSecurityRepository,
     SqlYieldRepository,
 )
+from fin_persistence.sandbox import SqlPortfolioRepository
 from fin_persistence.signals import (
     SqlAlertFeedQuery,
     SqlAlertRepository,
@@ -43,6 +44,7 @@ class SqlUnitOfWork:
     cursors: SqlBotCursorStore
     opportunities: SqlOpportunityQuery
     alert_feed: SqlAlertFeedQuery
+    portfolios: SqlPortfolioRepository
 
     def __init__(self, engine: Engine):
         self._sessions = sessionmaker(engine, expire_on_commit=False)
@@ -69,6 +71,7 @@ class SqlUnitOfWork:
         self.cursors = SqlBotCursorStore(self._session)
         self.opportunities = SqlOpportunityQuery(self._session)
         self.alert_feed = SqlAlertFeedQuery(self._session)
+        self.portfolios = SqlPortfolioRepository(self._session)
         return self
 
     def __exit__(

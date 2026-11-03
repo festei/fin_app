@@ -123,3 +123,33 @@ def test_a_retry_after_the_backoff_goes_through_the_real_database(sqlite_contain
     assert c.deliver_due_alerts.execute(NOW + timedelta(minutes=1), channels=[chan]) == 0  # backoff
     assert c.deliver_due_alerts.execute(NOW + timedelta(minutes=3), channels=[chan]) == 1
     assert deliveries(c) == [("sent", 2)]
+
+
+# --- the sandbox: overlapping scheduled steps ---------------------------------------------------
+
+
+@pytest.mark.postgres
+def test_overlapping_sandbox_steps_do_not_duplicate_strategy_orders(postgres_container):
+    """Two steps start at the same time. The row lock on the portfolio makes the second one wait
+    and then see the first one's signal cursor, so the signal produces exactly one order."""
+    from fin_domain.market_data import PriceBar
+
+    c = postgres_container
+    with c.uow_factory() as uow:
+        uow.securities.upsert([SecurityUpdate(AAA)])
+        uow.prices.upsert(AAA, [PriceBar(ts=datetime(2025, 3, 10, 21, tzinfo=UTC), close=10.0)])
+    pid = c.create_portfolio.execute("S", mode="strategy", cash=100).portfolio.id
+    with c.uow_factory() as uow:
+        score = uow.scores.add(ScoreEntry(AAA, NOW, 80.0, False, False, "x", computed_at=NOW))
+        uow.signals.add(AAA, score.id, Signal("AAA", "buy", 80.0, NOW, ""))
+    barrier = threading.Barrier(2)
+
+    def go():
+        barrier.wait()
+        c.run_sandbox.execute(datetime(2025, 3, 10, 22, tzinfo=UTC))
+
+    threads = [threading.Thread(target=go) for _ in range(2)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    with c.uow_factory() as uow:
+        assert len(uow.portfolios.orders(pid)) == 1

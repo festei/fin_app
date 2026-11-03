@@ -19,6 +19,7 @@ from fin_application.ports.market_data import (
     YieldRepository,
     YieldSource,
 )
+from fin_application.ports.sandbox import PortfolioRepository, SandboxConfigSource
 from fin_application.ports.scoring import ScoringConfigSource, ScoringEngine
 from fin_application.ports.signals import (
     AlertFeedQuery,
@@ -48,8 +49,10 @@ __all__ = [
     "JobRunRepository",
     "OpportunityQuery",
     "OpportunityRow",
+    "PortfolioRepository",
     "PriceRepository",
     "PriceSource",
+    "SandboxConfigSource",
     "ScoreRepository",
     "ScoringConfigSource",
     "ScoringEngine",
