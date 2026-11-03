@@ -32,8 +32,8 @@ from typing import Any
 
 import httpx
 
-from fin_core.providers.base import AccessDeniedError, ProviderError, RateLimitError
-from fin_core.providers.edgar_concepts import PERIODIC_FORMS, TAG_TO_CONCEPT
+from fin_domain.market_data import PERIODIC_FORMS, TAG_TO_CONCEPT
+from fin_providers.base import AccessDeniedError, ProviderError, RateLimitError
 
 log = logging.getLogger(__name__)
 

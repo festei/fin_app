@@ -96,6 +96,7 @@ known-first-party = [
 "packages/persistence/**" = ["TID251", "DTZ"]
 # fixtures are imported by name from db_fixtures.py (see its docstring)
 "packages/persistence/tests/**" = ["TID251", "DTZ", "F811"]
+"packages/providers/tests/**" = ["TID251", "DTZ", "F811"]
 "packages/providers/**" = ["TID251", "DTZ"]
 "packages/telegram/**" = ["TID251", "DTZ"]
 "packages/langgraph/**" = ["TID251", "DTZ"]
@@ -112,6 +113,7 @@ testpaths = [
     "packages/application/tests",
     "packages/testkit/tests",
     "packages/persistence/tests",
+    "packages/providers/tests",
     "packages/config/tests",
     "packages/bootstrap/tests",
     "apps/api/tests",

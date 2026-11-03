@@ -15,7 +15,7 @@ from fin_core.alerts.pipeline import process_signals, send_due
 from fin_core.alerts.policy import AlertPolicy
 from fin_core.db import signals_repo
 from fin_core.db.session import session_scope
-from fin_core.ingest import RunSummary, tracked_run
+from fin_core.run_tracking import RunSummary, tracked_run
 from fin_core.signals import score_universe
 
 

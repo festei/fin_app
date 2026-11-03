@@ -1,25 +1,13 @@
-import json
 import os
 from datetime import UTC, date, datetime
 from decimal import Decimal
-from pathlib import Path
 
 import pytest
 from sqlalchemy import text
 
 from fin_core.db import migrate, repo
 from fin_core.db.session import make_engine, session_scope
-from fin_core.providers.edgar_concepts import CONCEPT_TAGS
-
-FIXTURES = Path(__file__).parent / "fixtures"
-
-
-@pytest.fixture
-def fixture_json():
-    def load(name: str):
-        return json.loads((FIXTURES / name).read_text())
-
-    return load
+from fin_domain.market_data import CONCEPT_TAGS
 
 
 @pytest.fixture(params=["sqlite", pytest.param("postgres", marks=pytest.mark.postgres)])

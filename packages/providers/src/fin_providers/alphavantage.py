@@ -18,7 +18,7 @@ import os
 import httpx
 import pandas as pd
 
-from fin_core.providers.base import ProviderError, RateLimitError
+from fin_providers.base import ProviderError, RateLimitError
 
 # httpx logs every request URL at INFO, which would write the API key to the logs.
 logging.getLogger("httpx").setLevel(logging.WARNING)

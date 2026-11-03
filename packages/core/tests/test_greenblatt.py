@@ -22,8 +22,8 @@ from fin_core.db.session import session_scope
 from fin_core.graph import load_config
 from fin_core.graph.nodes.greenblatt import score_greenblatt
 from fin_core.models import AnnualPoint, ScoreResult, SecurityMetrics
-from fin_core.providers.edgar_concepts import CONCEPT_TAGS
 from fin_core.scoring import score_security
+from fin_domain.market_data import CONCEPT_TAGS
 
 CFG = load_config()["greenblatt"]
 FY22, FY23, FY24 = date(2022, 12, 31), date(2023, 12, 31), date(2024, 12, 31)

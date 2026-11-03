@@ -1,6 +1,6 @@
 """Turn point-in-time fundamental facts into fiscal-year series.
 
-Input is what ``repo.facts_as_of`` returns (so nothing filed after ``as_of`` is visible).
+Input is a point-in-time view (``known_as_of``), so nothing filed after ``as_of`` is visible.
 Rules, chosen so the series is comparable year to year:
 
 * only annual reports count (10-K family); quarterly figures and YTD sums are ignored;
@@ -17,53 +17,21 @@ from __future__ import annotations
 from collections.abc import Iterable
 from datetime import date
 
-from fin_core.db.models import FundamentalFact
-from fin_core.providers.edgar_concepts import CONCEPT_TAGS
-
-STOCK_CONCEPTS = frozenset(
-    {
-        "Assets",
-        "AssetsCurrent",
-        "Liabilities",
-        "LiabilitiesCurrent",
-        "StockholdersEquity",
-        "LongTermDebt",
-        "Cash",
-        "RetainedEarnings",
-        "InventoryNet",
-        "PropertyPlantAndEquipmentNet",
-        "LongTermDebtCurrent",
-    }
+from fin_domain.market_data.concepts import (
+    ANNUAL_DAYS,
+    ANNUAL_FORMS,
+    CONCEPT_TAGS,
+    FLOW_CONCEPTS,
+    SNAPSHOT_CONCEPTS,
+    STOCK_CONCEPTS,
+    UNIT,
 )
-FLOW_CONCEPTS = frozenset(
-    {
-        "Revenue",
-        "GrossProfit",
-        "OperatingIncome",
-        "NetIncome",
-        "EpsDiluted",
-        "DividendsPerShare",
-        "InterestExpense",
-        "NetCashFromOperating",
-        "Capex",
-        "DepreciationAmortization",
-        "ResearchAndDevelopmentExpense",
-    }
-)
-SNAPSHOT_CONCEPTS = frozenset({"SharesOutstanding"})
-
-UNIT = {
-    "EpsDiluted": "USD/shares",
-    "DividendsPerShare": "USD/shares",
-    "SharesOutstanding": "shares",
-}
-ANNUAL_FORMS = frozenset({"10-K", "10-K/A", "10-KT"})
-ANNUAL_DAYS = (350, 380)
+from fin_domain.market_data.fact import Fact
 
 Series = dict[str, list[tuple[date, float]]]
 
 
-def _is_annual_flow(f: FundamentalFact) -> bool:
+def _is_annual_flow(f: Fact) -> bool:
     days = (f.period_end - f.period_start).days
     return ANNUAL_DAYS[0] <= days <= ANNUAL_DAYS[1]
 
@@ -104,7 +72,7 @@ def _derive_total_debt(best: dict[tuple[str, date], tuple[tuple[int, int], float
             best[("TotalDebt", end)] = ((0, 0), total)
 
 
-def annual_series(facts: Iterable[FundamentalFact]) -> Series:
+def annual_series(facts: Iterable[Fact]) -> Series:
     """``{concept: [(fiscal_year_end, value), ...]}``, oldest first."""
     best: dict[tuple[str, date], tuple[tuple[int, int], float]] = {}
     for f in facts:

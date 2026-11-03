@@ -27,8 +27,8 @@ from datetime import UTC, date, datetime, time, timedelta
 from sqlalchemy.orm import Session
 
 from fin_core.db import repo
-from fin_core.metrics.annual import ANNUAL_DAYS, Series, annual_series
 from fin_core.models import AnnualPoint, SecurityMetrics
+from fin_domain.market_data import ANNUAL_DAYS, Series, annual_series
 
 STALE_FUNDAMENTALS = timedelta(days=548)  # ~18 months without a new annual report
 STALE_PRICE = timedelta(days=7)

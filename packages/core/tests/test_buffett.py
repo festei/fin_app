@@ -24,8 +24,8 @@ from fin_core.graph import build_graph, load_config
 from fin_core.graph.build import aggregate_node, decide_node
 from fin_core.graph.nodes.buffett import score_buffett
 from fin_core.models import AnnualPoint, ScoreResult, SecurityMetrics
-from fin_core.providers.edgar_concepts import CONCEPT_TAGS
 from fin_core.scoring import score_security
+from fin_domain.market_data import CONCEPT_TAGS
 
 CFG = load_config()
 BUFFETT_CFG = CFG["buffett"]

@@ -23,11 +23,11 @@ from decimal import Decimal
 from fin_core.alerts.channels import InAppChannel
 from fin_core.db import migrate, repo, signals_repo
 from fin_core.db.session import make_engine, session_scope
-from fin_core.providers.edgar_concepts import CONCEPT_TAGS
 from fin_core.sandbox import engine as sandbox
 from fin_core.sandbox.config import SandboxConfig
 from fin_core.sandbox.run import run_sandbox
 from fin_core.scoring_run import run_scoring
+from fin_domain.market_data import CONCEPT_TAGS
 
 EPS = [1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 2.0, 2.2, 2.5, 2.7]  # oldest first
 DPS = [0.5, 0.5, 0.5, 0.6, 0.6, 0.0, 0.7, 0.7, 0.8, 0.8, 0.9, 1.0, 1.0]

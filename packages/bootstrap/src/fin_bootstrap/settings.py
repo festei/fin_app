@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 
 from fin_persistence.session import postgres_url
 
@@ -18,6 +19,9 @@ from fin_persistence.session import postgres_url
 class Settings:
     database_url: str | None = None
     db_connect_timeout: int = 10
+    config_dir: Path | None = None  # FIN_CONFIG_DIR
+    sec_user_agent: str | None = None  # SEC_USER_AGENT (EDGAR requires contact details)
+    fred_api_key: str | None = None  # FRED_API_KEY
 
     @property
     def database_configured(self) -> bool:
@@ -37,4 +41,9 @@ class Settings:
                 env.get("POSTGRES_HOST", "localhost"),
                 env.get("POSTGRES_PORT", "5432"),
             )
-        return cls(database_url=url or None)
+        return cls(
+            database_url=url or None,
+            config_dir=Path(env["FIN_CONFIG_DIR"]) if env.get("FIN_CONFIG_DIR") else None,
+            sec_user_agent=env.get("SEC_USER_AGENT") or None,
+            fred_api_key=env.get("FRED_API_KEY") or None,
+        )

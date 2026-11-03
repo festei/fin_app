@@ -8,7 +8,6 @@ from contextlib import asynccontextmanager, contextmanager
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from functools import lru_cache
-from types import SimpleNamespace
 from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
@@ -39,6 +38,7 @@ from fin_core.metrics import UnknownSecurityError
 from fin_core.models import ScoreResult, SecurityMetrics, Signal
 from fin_core.sandbox import engine as sandbox
 from fin_core.scoring import score_security
+from fin_domain.market_data import aggregate_candles
 
 log = logging.getLogger("fin_api")
 
@@ -504,8 +504,7 @@ def security_prices(
             .where(PriceBar.security_id == sec.id, PriceBar.ts >= since)
             .order_by(PriceBar.ts)
         ).all()
-    if len(bars) > max_points:
-        bars = _aggregate(bars, -(-len(bars) // max_points))
+    bars = aggregate_candles(bars, max_points)
     return [
         BarOut(
             ts=b.ts.isoformat(),
@@ -517,30 +516,6 @@ def security_prices(
         )
         for b in bars
     ]
-
-
-def _aggregate(bars: list[PriceBar], step: int) -> list[SimpleNamespace]:
-    """Merge every ``step`` consecutive bars into one candle (first open, highest high, lowest
-    low, last close, summed volume, timestamp of the last bar). Buckets are counted from the
-    newest bar, so the latest candle ends on the latest bar and a candlestick or band chart keeps
-    the true extremes."""
-    out = []
-    for end in range(len(bars), 0, -step):
-        group = bars[max(0, end - step) : end]
-        highs = [b.high for b in group if b.high is not None]
-        lows = [b.low for b in group if b.low is not None]
-        volumes = [b.volume for b in group if b.volume is not None]
-        out.append(
-            SimpleNamespace(
-                ts=group[-1].ts,
-                open=group[0].open,
-                high=max(highs) if highs else None,
-                low=min(lows) if lows else None,
-                close=group[-1].close,
-                volume=sum(volumes) if volumes else None,
-            )
-        )
-    return out[::-1]
 
 
 @app.get("/api/securities/{ticker}/scores", response_model=ScoreHistory)

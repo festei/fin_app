@@ -4,10 +4,10 @@ import httpx
 import pandas as pd
 import pytest
 
-from fin_core.providers import alphavantage, yfinance_provider
-from fin_core.providers.alphavantage import AlphaVantageProvider
-from fin_core.providers.base import ProviderError, RateLimitError
-from fin_core.providers.yfinance_provider import YFinancePriceProvider
+from fin_providers import alphavantage, yfinance_provider
+from fin_providers.alphavantage import AlphaVantageProvider
+from fin_providers.base import ProviderError, RateLimitError
+from fin_providers.yfinance_provider import YFinancePriceProvider
 
 KEY = "SECRET-KEY-123"
 

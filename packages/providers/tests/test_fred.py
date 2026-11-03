@@ -4,9 +4,10 @@ from decimal import Decimal
 
 import httpx
 import pytest
+from provider_fixtures import fixture_json  # noqa: F401 - pytest fixture
 
-from fin_core.providers.base import ProviderError, RateLimitError
-from fin_core.providers.fred import FredClient
+from fin_providers.base import ProviderError, RateLimitError
+from fin_providers.fred import FredClient
 
 KEY = "FRED-SECRET-KEY"
 

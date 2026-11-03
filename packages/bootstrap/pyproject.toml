@@ -5,6 +5,7 @@ description = "Composition root: reads settings and wires adapters into the use 
 requires-python = ">=3.12"
 dependencies = [
     "fin-application",
+    "fin-domain",
     "fin-persistence",
     "fin-providers",
     "fin-telegram",

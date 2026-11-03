@@ -5,6 +5,8 @@ description = "Prefect flows for slow batch work (ingestion, scoring, nightly sa
 requires-python = ">=3.12"
 dependencies = [
     "fin-core",
+    "fin-bootstrap",
+    "fin-application",
     "prefect>=3.0",
 ]
 

@@ -5,6 +5,7 @@ description = "Driven adapter: YAML/env configuration, feature flags, universe f
 requires-python = ">=3.12"
 dependencies = [
     "fin-application",
+    "fin-domain",
     "pyyaml>=6",
 ]
 

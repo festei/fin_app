@@ -12,10 +12,20 @@ from types import TracebackType
 from typing import Protocol, Self
 
 from fin_application.ports.job_runs import JobRunRepository
+from fin_application.ports.market_data import (
+    FactRepository,
+    PriceRepository,
+    SecurityRepository,
+    YieldRepository,
+)
 
 
 class UnitOfWork(Protocol):
     job_runs: JobRunRepository
+    securities: SecurityRepository
+    prices: PriceRepository
+    facts: FactRepository
+    yields: YieldRepository
 
     def __enter__(self) -> Self: ...
 

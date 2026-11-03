@@ -1,9 +1,9 @@
 import pytest
 from prefect.testing.utilities import prefect_test_harness
 
+from fin_application.runs import RunSummary
 from fin_core.db import migrate
 from fin_core.db.session import make_engine
-from fin_core.ingest import RunSummary
 from fin_flows import pipeline, scoring, serve
 
 

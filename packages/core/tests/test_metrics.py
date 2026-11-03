@@ -11,10 +11,9 @@ import pytest
 from fin_core.db import repo
 from fin_core.db.session import session_scope
 from fin_core.metrics import UnknownSecurityError, compute_metrics
-from fin_core.metrics.annual import annual_series
 from fin_core.metrics.compute import consecutive_positive_years, earnings_growth
-from fin_core.providers.edgar_concepts import CONCEPT_TAGS
 from fin_core.scoring import score_security
+from fin_domain.market_data import CONCEPT_TAGS
 
 YEARS = list(range(2013, 2025))
 EPS = [1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 2.0, 2.2, 2.5]
@@ -192,27 +191,6 @@ def test_quarterly_and_partial_year_figures_are_ignored(db):
         )
     m = metrics(db, as_of=date(2025, 3, 10))
     assert m.eps == 2.5 and len(m.annual["EpsDiluted"]) == 12
-
-
-def test_tag_priority_keeps_the_series_continuous_across_tag_changes():
-    old, new = CONCEPT_TAGS["Revenue"][2], CONCEPT_TAGS["Revenue"][0]
-
-    class F:  # minimal stand-in; annual_series only reads attributes
-        def __init__(self, row):
-            self.__dict__.update(row)
-
-    rows = [
-        F(fact("Revenue", 100, date(2020, 12, 31), tag=old)),  # only the old tag exists
-        F(fact("Revenue", 110, date(2021, 12, 31), tag=old)),
-        F(fact("Revenue", 120, date(2021, 12, 31), tag=new)),  # both exist: the preferred tag wins
-        F(fact("Revenue", 130, date(2022, 12, 31), tag=new)),
-    ]
-    series = annual_series(rows)
-    assert series["Revenue"] == [
-        (date(2020, 12, 31), 100.0),
-        (date(2021, 12, 31), 120.0),
-        (date(2022, 12, 31), 130.0),
-    ]
 
 
 def test_loss_making_and_negative_equity_stay_visible_as_negative_values(raw_engine):
@@ -532,14 +510,6 @@ def test_missing_or_stale_data_are_signal_blockers_other_warnings_are_not(db):
     assert metrics(db).signal_blockers == []
 
 
-def test_every_mapped_concept_is_classified_so_annual_series_cannot_drop_one_silently():
-    from fin_core.metrics.annual import FLOW_CONCEPTS, SNAPSHOT_CONCEPTS, STOCK_CONCEPTS
-
-    classified = STOCK_CONCEPTS | FLOW_CONCEPTS | SNAPSHOT_CONCEPTS
-    assert set(CONCEPT_TAGS) == classified  # none unclassified, none classified but unmapped
-    assert not (STOCK_CONCEPTS & FLOW_CONCEPTS)
-
-
 # --- PR #13 review: one definition of debt, one source of share counts ----------------------
 
 DEBT_NONCURRENT = CONCEPT_TAGS["LongTermDebt"][0]  # excludes the portion due within a year
@@ -547,48 +517,8 @@ DEBT_TOTAL = CONCEPT_TAGS["LongTermDebt"][1]  # already includes it
 SHARES_COVER, SHARES_BALANCE = CONCEPT_TAGS["SharesOutstanding"][:2]
 
 
-class _Row:
-    def __init__(self, row):
-        self.__dict__.update(row)
-
-
-def derived(concept, *rows):
-    return annual_series([_Row(r) for r in rows]).get(concept)
-
-
 def debt_fact(value, end, tag, concept="LongTermDebt"):
     return fact(concept, value, end, tag=tag, instant=True)
-
-
-def test_total_debt_adds_the_current_portion_to_the_noncurrent_tag():
-    rows = (
-        debt_fact(400, FY24, DEBT_NONCURRENT),
-        debt_fact(100, FY24, None, "LongTermDebtCurrent"),
-    )
-    assert derived("TotalDebt", *rows) == [(FY24, 500.0)]
-
-
-def test_total_debt_does_not_double_count_when_the_total_tag_already_includes_it():
-    rows = (debt_fact(500, FY24, DEBT_TOTAL), debt_fact(100, FY24, None, "LongTermDebtCurrent"))
-    assert derived("TotalDebt", *rows) == [(FY24, 500.0)]  # not 600
-
-
-def test_total_debt_per_year_follows_the_tag_in_use_that_year():
-    rows = (
-        debt_fact(450, FY23, DEBT_TOTAL),
-        debt_fact(50, FY23, None, "LongTermDebtCurrent"),
-        debt_fact(400, FY24, DEBT_NONCURRENT),
-        debt_fact(100, FY24, None, "LongTermDebtCurrent"),
-    )
-    assert derived("TotalDebt", *rows) == [(FY23, 450.0), (FY24, 500.0)]
-
-
-def test_total_debt_edge_cases():
-    only_noncurrent = (debt_fact(400, FY24, DEBT_NONCURRENT),)
-    assert derived("TotalDebt", *only_noncurrent) == [(FY24, 400.0)]
-    only_current = (debt_fact(100, FY24, None, "LongTermDebtCurrent"),)
-    assert derived("TotalDebt", *only_current) == [(FY24, 100.0)]
-    assert derived("TotalDebt") is None
 
 
 def test_debt_to_equity_uses_total_debt_without_double_counting(raw_engine):
@@ -600,16 +530,3 @@ def test_debt_to_equity_uses_total_debt_without_double_counting(raw_engine):
             debt_fact(100, FY24, None, "LongTermDebtCurrent"),
         ])  # fmt: skip
         assert metrics(raw_engine, ticker=ticker).debt_to_equity == pytest.approx(expected)
-
-
-def test_share_counts_come_from_one_source_not_a_mix_of_cover_and_balance_sheet():
-    rows = (
-        fact("SharesOutstanding", 95, FY23, tag=SHARES_BALANCE, unit="shares", instant=True),
-        fact("SharesOutstanding", 98, FY24, tag=SHARES_BALANCE, unit="shares", instant=True),
-        fact("SharesOutstanding", 100, COVER24, tag=SHARES_COVER, unit="shares", instant=True),
-    )
-    # the cover page has data (for one year only): balance-sheet counts are dropped, so a
-    # year-over-year change is never computed across two different kinds of count
-    assert derived("SharesOutstanding", *rows) == [(COVER24, 100.0)]
-    only_balance = rows[:2]
-    assert derived("SharesOutstanding", *only_balance) == [(FY23, 95.0), (FY24, 98.0)]

@@ -25,7 +25,7 @@ from typing import Any
 
 import httpx
 
-from fin_core.providers.base import ProviderError, RateLimitError
+from fin_providers.base import ProviderError, RateLimitError
 
 logging.getLogger("httpx").setLevel(logging.WARNING)  # request URLs contain the API key
 

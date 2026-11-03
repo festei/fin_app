@@ -9,12 +9,22 @@ from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from fin_persistence.job_runs import SqlJobRunRepository
+from fin_persistence.market_data import (
+    SqlFactRepository,
+    SqlPriceRepository,
+    SqlSecurityRepository,
+    SqlYieldRepository,
+)
 
 
 class SqlUnitOfWork:
     """Commits when the ``with`` block ends normally, rolls back if it raises, always closes."""
 
     job_runs: SqlJobRunRepository
+    securities: SqlSecurityRepository
+    prices: SqlPriceRepository
+    facts: SqlFactRepository
+    yields: SqlYieldRepository
 
     def __init__(self, engine: Engine):
         self._sessions = sessionmaker(engine, expire_on_commit=False)
@@ -29,6 +39,10 @@ class SqlUnitOfWork:
     def __enter__(self) -> Self:
         self._session = self._sessions()
         self.job_runs = SqlJobRunRepository(self._session)
+        self.securities = SqlSecurityRepository(self._session)
+        self.prices = SqlPriceRepository(self._session)
+        self.facts = SqlFactRepository(self._session)
+        self.yields = SqlYieldRepository(self._session)
         return self
 
     def __exit__(

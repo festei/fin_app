@@ -9,8 +9,8 @@ import os
 
 import pytest
 
-from fin_core.providers.edgar import EdgarClient, normalize_facts
-from fin_core.providers.fred import FredClient
+from fin_providers.edgar import EdgarClient, normalize_facts
+from fin_providers.fred import FredClient
 
 pytestmark = [
     pytest.mark.live,

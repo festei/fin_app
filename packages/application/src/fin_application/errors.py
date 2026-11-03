@@ -13,3 +13,16 @@ class InvalidCommand(ApplicationError, ValueError):
 
 class ConcurrencyConflict(ApplicationError):
     """Someone else changed the thing since it was loaded; reload and decide again."""
+
+
+class ProviderError(ApplicationError, RuntimeError):
+    """A data provider failed or returned something unusable. Never contains credentials."""
+
+
+class RateLimitError(ProviderError):
+    """The provider throttled us (often reported as HTTP 200 with a note in the body)."""
+
+
+class AccessDeniedError(ProviderError):
+    """The provider refused us (e.g. EDGAR 403 for a missing/invalid User-Agent). Retrying
+    cannot help until the configuration is fixed, so ingestion aborts the run."""

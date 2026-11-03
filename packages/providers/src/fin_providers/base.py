@@ -1,21 +1,21 @@
+"""Adapter-local protocols for the frame-based vendors. The errors a provider may raise are part of
+the port contract and live in ``fin_application.errors``; they are re-exported here."""
+
 from __future__ import annotations
 
 from typing import Protocol
 
 import pandas as pd
 
+from fin_application.errors import AccessDeniedError, ProviderError, RateLimitError
 
-class ProviderError(RuntimeError):
-    """A data provider failed or returned something unusable. Never contains credentials."""
-
-
-class RateLimitError(ProviderError):
-    """The provider throttled us (often reported as HTTP 200 with a note in the body)."""
-
-
-class AccessDeniedError(ProviderError):
-    """The provider refused us (e.g. EDGAR 403 for a missing/invalid User-Agent). Retrying
-    cannot help until the configuration is fixed, so ingestion aborts the run."""
+__all__ = [
+    "AccessDeniedError",
+    "FundamentalsProvider",
+    "PriceProvider",
+    "ProviderError",
+    "RateLimitError",
+]
 
 
 class PriceProvider(Protocol):

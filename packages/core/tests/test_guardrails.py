@@ -23,8 +23,8 @@ from fin_core.db.session import session_scope
 from fin_core.graph import build_graph, load_config
 from fin_core.graph.guardrails import altman, guardrails_node, piotroski
 from fin_core.models import AnnualPoint, SecurityMetrics
-from fin_core.providers.edgar_concepts import CONCEPT_TAGS
 from fin_core.scoring import score_security
+from fin_domain.market_data import CONCEPT_TAGS
 
 CFG = load_config()
 G = CFG["guardrails"]

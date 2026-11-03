@@ -10,7 +10,7 @@ from sqlalchemy import Engine, select
 
 from fin_core.db.models import Portfolio
 from fin_core.db.session import session_scope
-from fin_core.ingest import RunSummary, run_status, tracked_run
+from fin_core.run_tracking import RunSummary, run_status, tracked_run
 from fin_core.sandbox import engine as sandbox
 
 log = logging.getLogger(__name__)

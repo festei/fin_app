@@ -1,4 +1,4 @@
-"""Which XBRL tags feed which of our normalized concepts.
+"""Which XBRL tags feed which of our normalized concepts, and how each concept behaves.
 
 A company reports a concept under one of several tags depending on the era and its
 accounting choices (e.g. revenue). All candidate tags are stored under the same normalized
@@ -55,3 +55,45 @@ TAG_TO_CONCEPT: dict[str, str] = {tag: c for c, tags in CONCEPT_TAGS.items() for
 
 # Periodic reports only; 8-K and registration statements carry few, inconsistent facts.
 PERIODIC_FORMS = frozenset({"10-K", "10-K/A", "10-KT", "10-Q", "10-Q/A"})
+
+# --- how each concept is measured (used to build fiscal-year series) ----------------------------
+
+STOCK_CONCEPTS = frozenset(
+    {
+        "Assets",
+        "AssetsCurrent",
+        "Liabilities",
+        "LiabilitiesCurrent",
+        "StockholdersEquity",
+        "LongTermDebt",
+        "Cash",
+        "RetainedEarnings",
+        "InventoryNet",
+        "PropertyPlantAndEquipmentNet",
+        "LongTermDebtCurrent",
+    }
+)
+FLOW_CONCEPTS = frozenset(
+    {
+        "Revenue",
+        "GrossProfit",
+        "OperatingIncome",
+        "NetIncome",
+        "EpsDiluted",
+        "DividendsPerShare",
+        "InterestExpense",
+        "NetCashFromOperating",
+        "Capex",
+        "DepreciationAmortization",
+        "ResearchAndDevelopmentExpense",
+    }
+)
+SNAPSHOT_CONCEPTS = frozenset({"SharesOutstanding"})
+
+UNIT = {
+    "EpsDiluted": "USD/shares",
+    "DividendsPerShare": "USD/shares",
+    "SharesOutstanding": "shares",
+}
+ANNUAL_FORMS = frozenset({"10-K", "10-K/A", "10-KT"})
+ANNUAL_DAYS = (350, 380)
