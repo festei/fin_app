@@ -14,6 +14,9 @@ from sqlalchemy import inspect
 from fin_core.db import migrate, repo
 from fin_core.db.models import Base, FundamentalFact
 from fin_core.db.session import database_url, session_scope
+from fin_domain.market_data import known_as_of
+from fin_domain.shared import Ticker
+from fin_persistence.market_data import SqlFactRepository
 
 
 @pytest.fixture
@@ -89,7 +92,7 @@ def test_facts_dedupe_on_natural_key(engine):
         assert s.query(FundamentalFact).one().value == Decimal("1000")
 
 
-def test_facts_as_of_is_point_in_time_and_sees_restatements_only_after_filing(engine):
+def test_point_in_time_view_sees_restatements_only_after_filing(engine):
     with session_scope(engine) as s:
         repo.upsert_securities(s, [{"ticker": "IBM"}])
         sid = repo.get_security(s, "IBM").id
@@ -112,9 +115,8 @@ def test_facts_as_of_is_point_in_time_and_sees_restatements_only_after_filing(en
         )
 
         def revenue(as_of):
-            return {
-                (f.period_end.year): f.value for f in repo.facts_as_of(s, sid, as_of, ["Revenue"])
-            }
+            stored = SqlFactRepository(s).filed_up_to(Ticker("IBM"), as_of, ["Revenue"])
+            return {f.period_end.year: f.value for f in known_as_of(stored, as_of)}
 
         assert revenue(date(2024, 1, 31)) == {}  # nothing public yet
         assert revenue(date(2024, 3, 1)) == {2023: Decimal("1000")}  # original number

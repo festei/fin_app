@@ -1,8 +1,10 @@
 from datetime import datetime
 
-from fin_core.graph import build_graph, load_config
-from fin_core.graph.nodes.graham import score_graham
-from fin_core.models import SecurityMetrics
+from graph_compat import build_graph
+
+from fin_config import load_scoring_config as load_config
+from fin_domain.scoring import SecurityMetrics
+from fin_domain.scoring.philosophies.graham import score_graham
 
 CFG = load_config()
 

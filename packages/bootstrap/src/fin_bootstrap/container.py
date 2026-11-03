@@ -11,13 +11,17 @@ from fin_application.ports import (
     Clock,
     FundamentalsSource,
     PriceSource,
+    ScoringConfigSource,
+    ScoringEngine,
     UnitOfWorkFactory,
     UniverseSource,
     YieldSource,
 )
+from fin_application.scoring import ScoreSecurityLive
 from fin_bootstrap.clock import SystemClock
 from fin_bootstrap.settings import Settings
-from fin_config import ConfigLocator, YamlUniverseSource
+from fin_config import ConfigLocator, YamlScoringConfig, YamlUniverseSource
+from fin_langgraph import LangGraphScoringEngine
 from fin_persistence import SqlUnitOfWork, make_engine
 from fin_providers import (
     EdgarClient,
@@ -45,6 +49,8 @@ class Container:
         fundamentals_source: FundamentalsSource | None = None,
         yield_source: YieldSource | None = None,
         price_source: PriceSource | None = None,
+        scoring_engine: ScoringEngine | None = None,
+        scoring_config: ScoringConfigSource | None = None,
     ):
         self.settings = settings
         self.clock: Clock = clock or SystemClock()
@@ -53,6 +59,8 @@ class Container:
         self._fundamentals_source = fundamentals_source
         self._yield_source = yield_source
         self._price_source = price_source
+        self._scoring_engine = scoring_engine
+        self._scoring_config = scoring_config
 
     @classmethod
     def from_environ(cls) -> Container:
@@ -106,6 +114,18 @@ class Container:
             self._price_source = YahooPriceSource()
         return self._price_source
 
+    @property
+    def scoring_engine(self) -> ScoringEngine:
+        if self._scoring_engine is None:
+            self._scoring_engine = LangGraphScoringEngine()  # compiled once, reused
+        return self._scoring_engine
+
+    @property
+    def scoring_config(self) -> ScoringConfigSource:
+        if self._scoring_config is None:
+            self._scoring_config = YamlScoringConfig(ConfigLocator(self.settings.config_dir))
+        return self._scoring_config
+
     # --- use cases --------------------------------------------------------------------------
 
     @property
@@ -127,3 +147,7 @@ class Container:
     @property
     def ingest_prices(self) -> IngestPrices:
         return IngestPrices(self.uow_factory, self.job_runs, self.price_source)
+
+    @property
+    def score_security_live(self) -> ScoreSecurityLive:
+        return ScoreSecurityLive(self.uow_factory, self.scoring_engine, self.scoring_config)

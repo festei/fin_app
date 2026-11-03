@@ -1,18 +1,21 @@
-"""Core data contracts shared by the graph, API, sandbox and UI.
+"""The values the scoring context works with.
 
-``ScoreResult`` is the single contract every philosophy node must satisfy,
-whether it is a deterministic function today or an LLM agent later.
+``ScoreResult`` is the single contract every philosophy must satisfy, whether it is a
+deterministic function today or an LLM agent later. These are plain dataclasses: the HTTP layer
+validates and serialises them (pydantic reads standard dataclasses), the domain needs nothing.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from fin_domain.shared import InvariantViolation
 
 
-class Criterion(BaseModel):
+@dataclass
+class Criterion:
     """One pass/fail test inside a philosophy, with the actual number shown."""
 
     name: str
@@ -22,16 +25,22 @@ class Criterion(BaseModel):
     detail: str = ""
 
 
-class ScoreResult(BaseModel):
+@dataclass
+class ScoreResult:
     philosophy: str
-    score: float = Field(ge=0, le=100)
-    criteria: list[Criterion] = Field(default_factory=list)
+    score: float
+    criteria: list[Criterion] = field(default_factory=list)
     explanation: str = ""
-    evidence: list[str] = Field(default_factory=list)
+    evidence: list[str] = field(default_factory=list)
     impl: Literal["deterministic", "llm"] = "deterministic"
     # False = this philosophy could not be evaluated (e.g. too little history). It abstains: the
     # aggregate ignores it instead of counting a 0, and `score` carries no meaning.
     evaluated: bool = True
+
+    def __post_init__(self) -> None:
+        self.score = float(self.score)
+        if not 0 <= self.score <= 100:
+            raise InvariantViolation(f"score must be between 0 and 100, got {self.score}")
 
     @property
     def passed_criteria(self) -> list[Criterion]:
@@ -42,12 +51,14 @@ class ScoreResult(BaseModel):
         return [c for c in self.criteria if not c.passed]
 
 
-class AnnualPoint(BaseModel):
+@dataclass
+class AnnualPoint:
     period_end: date
     value: float
 
 
-class SecurityMetrics(BaseModel):
+@dataclass
+class SecurityMetrics:
     """Point-in-time metrics for one security. Missing values are ``None``.
 
     The scalar ratios are what the Graham node uses; ``annual`` carries the fiscal-year history
@@ -72,19 +83,8 @@ class SecurityMetrics(BaseModel):
     sector: str | None = None
     # Share counts and per-share values cover one class only (see MULTI_CLASS_TICKERS).
     multi_class: bool = False
-    annual: dict[str, list[AnnualPoint]] = Field(default_factory=dict)
-    warnings: list[str] = Field(default_factory=list)  # data-quality notes, never silent gaps
+    annual: dict[str, list[AnnualPoint]] = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)  # data-quality notes, never silent gaps
     # Subset of the warnings that make the data too poor to emit a buy/sell signal on
-    # (no or stale price/fundamentals). The graph's decide node withholds signals while set.
-    signal_blockers: list[str] = Field(default_factory=list)
-
-
-SignalKind = Literal["buy", "sell", "watch", "emerging"]
-
-
-class Signal(BaseModel):
-    ticker: str
-    kind: SignalKind
-    conviction: float
-    as_of: datetime
-    reason: str = ""
+    # (no or stale price/fundamentals). The decision to signal withholds while this is set.
+    signal_blockers: list[str] = field(default_factory=list)

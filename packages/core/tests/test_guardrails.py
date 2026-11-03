@@ -17,14 +17,16 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
+from graph_compat import build_graph
 
+from fin_config import load_scoring_config as load_config
 from fin_core.db import repo
 from fin_core.db.session import session_scope
-from fin_core.graph import build_graph, load_config
-from fin_core.graph.guardrails import altman, guardrails_node, piotroski
-from fin_core.models import AnnualPoint, SecurityMetrics
 from fin_core.scoring import score_security
 from fin_domain.market_data import CONCEPT_TAGS
+from fin_domain.scoring import AnnualPoint, SecurityMetrics
+from fin_domain.scoring.guardrails import altman, piotroski
+from fin_langgraph import guardrails_node
 
 CFG = load_config()
 G = CFG["guardrails"]

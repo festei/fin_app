@@ -712,6 +712,8 @@ version = "0.1.0"
 source = { editable = "apps/api" }
 dependencies = [
     { name = "fastapi" },
+    { name = "fin-application" },
+    { name = "fin-bootstrap" },
     { name = "fin-core" },
     { name = "fin-domain" },
     { name = "uvicorn", extra = ["standard"] },
@@ -720,6 +722,8 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.111,<0.137" },
+    { name = "fin-application", editable = "packages/application" },
+    { name = "fin-bootstrap", editable = "packages/bootstrap" },
     { name = "fin-core", editable = "packages/core" },
     { name = "fin-domain", editable = "packages/domain" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
@@ -872,12 +876,14 @@ version = "0.1.0"
 source = { editable = "packages/langgraph" }
 dependencies = [
     { name = "fin-application" },
+    { name = "fin-domain" },
     { name = "langgraph" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "fin-application", editable = "packages/application" },
+    { name = "fin-domain", editable = "packages/domain" },
     { name = "langgraph", specifier = ">=0.2" },
 ]
 

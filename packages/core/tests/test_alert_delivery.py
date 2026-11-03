@@ -7,6 +7,7 @@ import threading
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
+from graph_compat import decide_node
 from sqlalchemy import create_engine, select, text
 
 from fin_core.alerts import pipeline
@@ -17,10 +18,10 @@ from fin_core.alerts.policy import AlertPolicy
 from fin_core.db import migrate, repo, signals_repo
 from fin_core.db.models import AlertDelivery, SignalRecord
 from fin_core.db.session import session_scope
-from fin_core.graph.build import BUY_REARM_BELOW, SELL_REARM_ABOVE, decide_node
-from fin_core.models import SecurityMetrics
 from fin_core.scoring_run import run_scoring
 from fin_core.signals import score_universe
+from fin_domain.scoring import SecurityMetrics
+from fin_domain.signals import BUY_REARM_BELOW, SELL_REARM_ABOVE
 
 NOW = datetime(2025, 3, 10, 12, 0, tzinfo=UTC)
 AS_OF = date(2025, 3, 10)

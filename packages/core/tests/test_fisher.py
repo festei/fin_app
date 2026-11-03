@@ -13,9 +13,9 @@ from datetime import UTC, date, datetime
 
 import pytest
 
-from fin_core.graph import load_config
-from fin_core.graph.nodes.fisher import score_fisher
-from fin_core.models import AnnualPoint, ScoreResult, SecurityMetrics
+from fin_config import load_scoring_config as load_config
+from fin_domain.scoring import AnnualPoint, ScoreResult, SecurityMetrics
+from fin_domain.scoring.philosophies.fisher import score_fisher
 
 CFG = load_config()["fisher"]
 YEARS = list(range(2015, 2025))

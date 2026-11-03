@@ -5,10 +5,11 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 
 import pytest
+from graph_compat import build_graph
 
-from fin_core.graph import build_graph, load_config
-from fin_core.graph.nodes import PHILOSOPHY_NODES
-from fin_core.models import AnnualPoint, SecurityMetrics
+from fin_config import load_scoring_config as load_config
+from fin_domain.scoring import AnnualPoint, SecurityMetrics
+from fin_langgraph import PHILOSOPHY_NODES
 
 CFG = load_config()
 YEARS = list(range(2015, 2025))

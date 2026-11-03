@@ -18,6 +18,9 @@ from sqlalchemy import Engine, or_, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from fin_application.scoring import Baseline
+from fin_application.scoring import score as score_metrics
+from fin_bootstrap import Container
 from fin_core import __version__
 from fin_core.alerts.pipeline import feed_item
 from fin_core.db import repo, signals_repo
@@ -32,13 +35,12 @@ from fin_core.db.models import (
 )
 from fin_core.db.session import database_configured, database_url, make_engine, session_scope
 from fin_core.features import FeatureFlags
-from fin_core.graph import build_graph, load_config
-from fin_core.graph.build import BUY_REARM_BELOW, SELL_REARM_ABOVE
-from fin_core.metrics import UnknownSecurityError
-from fin_core.models import ScoreResult, SecurityMetrics, Signal
 from fin_core.sandbox import engine as sandbox
 from fin_core.scoring import score_security
 from fin_domain.market_data import aggregate_candles
+from fin_domain.scoring import ScoreResult, SecurityMetrics
+from fin_domain.shared import NotFound
+from fin_domain.signals import BUY_REARM_BELOW, SELL_REARM_ABOVE, Signal
 
 log = logging.getLogger("fin_api")
 
@@ -67,13 +69,19 @@ async def validation_error(_: Request, exc: RequestValidationError) -> JSONRespo
 
 
 @lru_cache
-def _graph():
-    return build_graph()
+def _container() -> Container:
+    """Wiring for the scoring engine and its thresholds; the database is still reached through
+    this module's own session helpers until the HTTP layer moves onto the container."""
+    return Container.from_environ()
+
+
+def _scoring_engine():
+    return _container().scoring_engine
 
 
 @lru_cache
 def _config():
-    return load_config()
+    return dict(_container().scoring_config.load())
 
 
 class ScoreRequest(BaseModel):
@@ -147,7 +155,7 @@ def readyz() -> dict[str, str]:
     with one configured, an unreachable database makes the service not ready (503).
     """
     _config()
-    _graph()
+    _scoring_engine()
     if not database_configured():
         return {"status": "ready", "db": "not configured"}
     try:
@@ -167,20 +175,20 @@ def features() -> dict[str, bool]:
 
 @app.post("/api/score", response_model=ScoreResponse)
 def score(req: ScoreRequest) -> ScoreResponse:
-    out = _graph().invoke(
-        {
-            "metrics": req.metrics,
-            "config": _config(),
-            "previous_conviction": req.previous_conviction,
-        }
+    live = score_metrics(
+        req.metrics,
+        _scoring_engine(),
+        _config(),
+        Baseline(previous_conviction=req.previous_conviction),
     )
+    a = live.assessment
     return ScoreResponse(
-        conviction=out["conviction"],
-        all_abstained=out.get("all_abstained", False),
-        explanation=out["explanation"],
-        philosophy_results=out["philosophy_results"],
-        guardrail_results=out.get("guardrail_results", {}),
-        signal=out.get("signal"),
+        conviction=a.conviction,
+        all_abstained=a.all_abstained,
+        explanation=live.explanation,
+        philosophy_results=a.philosophy_results,
+        guardrail_results=a.guardrail_results,
+        signal=live.signal,
     )
 
 
@@ -225,10 +233,10 @@ def score_ticker(
                 previous_conviction=previous_conviction,
                 buy_armed=buy_armed,
                 sell_armed=sell_armed,
-                graph=_graph(),
+                scoring_engine=_scoring_engine(),
                 config=_config(),
             )
-    except UnknownSecurityError:
+    except NotFound:
         raise HTTPException(404, detail=f"unknown ticker {ticker.upper()}") from None
     except SQLAlchemyError as exc:
         # Same answer as /readyz for an unavailable database; only the type, no connection details.

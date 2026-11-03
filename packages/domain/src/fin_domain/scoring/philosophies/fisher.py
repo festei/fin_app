@@ -15,8 +15,8 @@ from __future__ import annotations
 from statistics import mean
 from typing import Any
 
-from fin_core.graph.data import cagr, recent_years, series_by_year
-from fin_core.models import Criterion, ScoreResult, SecurityMetrics
+from fin_domain.scoring.models import Criterion, ScoreResult, SecurityMetrics
+from fin_domain.scoring.series import cagr, recent_years, series_by_year
 
 NAME = "fisher"
 
@@ -137,10 +137,3 @@ def score_fisher(m: SecurityMetrics, cfg: dict[str, Any]) -> ScoreResult:
         evidence=["Quantitative subset only: Fisher's qualitative points are not scored."],
         explanation=f"Passes {passed} of {len(criteria)} quantifiable Fisher criteria.",
     )
-
-
-def fisher_node(state: dict[str, Any]) -> dict[str, Any]:
-    cfg = state["config"]["fisher"]
-    if cfg.get("impl", "deterministic") != "deterministic":
-        raise NotImplementedError("LLM-backed Fisher node is not implemented yet")
-    return {"philosophy_results": {NAME: score_fisher(state["metrics"], cfg)}}

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, TypedDict
 
-from fin_core.models import ScoreResult, SecurityMetrics, Signal
+from fin_domain.scoring import ScoreResult, SecurityMetrics
 
 
 def merge_results(
@@ -15,9 +15,6 @@ def merge_results(
 class GraphState(TypedDict, total=False):
     metrics: SecurityMetrics
     config: dict[str, Any]
-    previous_conviction: float | None
-    buy_armed: bool  # hysteresis: a new buy needs conviction to have fallen below BUY_REARM_BELOW
-    sell_armed: bool  # ... and a new sell needs it to have recovered to SELL_REARM_ABOVE
     philosophy_results: Annotated[dict[str, ScoreResult], merge_results]
     guardrail_veto: bool
     guardrail_results: dict[str, ScoreResult]
@@ -26,4 +23,3 @@ class GraphState(TypedDict, total=False):
     all_abstained: bool
     conviction: float | None  # None = nothing could be evaluated (not a score of 0)
     explanation: str
-    signal: Signal | None

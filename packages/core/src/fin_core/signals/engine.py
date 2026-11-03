@@ -1,6 +1,6 @@
 """Persist scoring runs and the signals they produce.
 
-The graph decides *whether* a transition happened (``decide_node``) given a
+The domain decides *whether* a transition happened (``fin_domain.signals.decide_signal``) given a
 ``previous_conviction``. This module supplies that baseline from storage and records the result:
 
 * baseline = the last *actionable* stored score (conviction set and not computed on blocked data).
@@ -15,19 +15,20 @@ The graph decides *whether* a transition happened (``decide_node``) given a
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
+from fin_config import load_scoring_config
 from fin_core.db import repo, signals_repo
 from fin_core.db.models import ScoreRecord, SignalRecord
 from fin_core.db.session import session_scope
-from fin_core.graph import build_graph, load_config
-from fin_core.graph.build import BUY_REARM_BELOW, SELL_REARM_ABOVE
 from fin_core.scoring import score_security
+from fin_domain.signals import BUY_REARM_BELOW, SELL_REARM_ABOVE
+from fin_langgraph import LangGraphScoringEngine
 
 
 @dataclass
@@ -40,12 +41,8 @@ class ScoreOutcome:
 def _details(out: dict[str, Any]) -> dict[str, Any]:
     metrics = out["metrics"]
     return {
-        "philosophies": {
-            n: r.model_dump(mode="json") for n, r in out["philosophy_results"].items()
-        },
-        "guardrails": {
-            n: r.model_dump(mode="json") for n, r in out.get("guardrail_results", {}).items()
-        },
+        "philosophies": {n: asdict(r) for n, r in out["philosophy_results"].items()},
+        "guardrails": {n: asdict(r) for n, r in out.get("guardrail_results", {}).items()},
         "guardrail_reasons": out.get("guardrail_reasons", []),
         "guardrail_notes": out.get("guardrail_notes", []),
         "warnings": metrics.warnings,
@@ -70,7 +67,7 @@ def score_and_record(
     ticker: str,
     as_of: date | datetime,
     *,
-    graph: Any = None,
+    scoring_engine: Any = None,
     config: dict[str, Any] | None = None,
 ) -> ScoreOutcome:
     """Score one stored security, store the run, and store the signal if one was emitted."""
@@ -90,7 +87,7 @@ def score_and_record(
         previous_conviction=previous.conviction if previous else None,
         buy_armed=buy_armed,
         sell_armed=sell_armed,
-        graph=graph,
+        scoring_engine=scoring_engine,
         config=config,
     )
     metrics = out["metrics"]
@@ -131,13 +128,13 @@ def score_universe(
     as_of: date | datetime,
     *,
     tickers: list[str] | None = None,
-    graph: Any = None,
+    scoring_engine: Any = None,
     config: dict[str, Any] | None = None,
 ) -> BatchSummary:
     """Score every active stock, one transaction per security so one failure cannot roll back or
     block the others. Returns the signals this run created (ids, so alerts can be built)."""
-    graph = graph or build_graph()
-    config = config or load_config()
+    scoring_engine = scoring_engine or LangGraphScoringEngine()
+    config = config or load_scoring_config()
     wanted = {t.upper() for t in tickers} if tickers else None
     with session_scope(engine) as s:
         targets = [
@@ -149,7 +146,9 @@ def score_universe(
     for ticker in targets:
         try:
             with session_scope(engine) as s:
-                outcome = score_and_record(s, ticker, as_of, graph=graph, config=config)
+                outcome = score_and_record(
+                    s, ticker, as_of, scoring_engine=scoring_engine, config=config
+                )
                 summary.scored += 1
                 if outcome.signal is not None:
                     summary.signals.append((outcome.signal.id, ticker, outcome.signal.kind))

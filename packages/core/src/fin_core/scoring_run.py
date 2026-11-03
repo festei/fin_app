@@ -26,7 +26,7 @@ def run_scoring(
     policy: AlertPolicy | None = None,
     tickers: list[str] | None = None,
     as_of: date | datetime | None = None,
-    graph: Any = None,
+    scoring_engine: Any = None,
     config: dict[str, Any] | None = None,
 ) -> RunSummary:
     """Status: ``failed`` if every security failed (or the channel configuration is invalid, which
@@ -40,7 +40,11 @@ def run_scoring(
         policy = policy or AlertPolicy.load()
         now = datetime.now(UTC)
         batch = score_universe(
-            engine, as_of or now.date(), tickers=tickers, graph=graph, config=config
+            engine,
+            as_of or now.date(),
+            tickers=tickers,
+            scoring_engine=scoring_engine,
+            config=config,
         )
         # Every signal still owed an alert decision: this run's new ones AND any left behind by
         # an earlier run that was interrupted (already-decided signals are never re-evaluated).

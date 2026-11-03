@@ -13,6 +13,7 @@ from fin_application.ports.market_data import (
     YieldRepository,
     YieldSource,
 )
+from fin_application.ports.scoring import ScoringConfigSource, ScoringEngine
 from fin_application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
 
 __all__ = [
@@ -23,6 +24,8 @@ __all__ = [
     "JobRunRepository",
     "PriceRepository",
     "PriceSource",
+    "ScoringConfigSource",
+    "ScoringEngine",
     "SecurityRepository",
     "UnitOfWork",
     "UnitOfWorkFactory",

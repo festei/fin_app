@@ -1,8 +1,9 @@
-"""Compute point-in-time ``SecurityMetrics`` from stored facts and prices.
+"""Compute point-in-time ``SecurityMetrics`` from a security's facts and its latest price.
 
-Everything is derived from data public at ``as_of``: fundamentals via ``repo.facts_as_of`` (by
-filing date) and the latest price bar on or before ``as_of``. Gaps are reported in
-``warnings`` and as ``None`` values, never silently filled.
+Everything is derived from data public at ``as_of``: fundamentals by filing date
+(``known_as_of``) and the latest price bar on or before ``as_of``. Gaps are reported in
+``warnings`` and as ``None`` values, never silently filled. The caller loads the inputs (every
+version of the facts filed up to ``as_of``, the latest bar); nothing here reads storage.
 
 Rules that keep ratios honest:
 * each ratio combines numerator and denominator from the *same* fiscal year (a concept that
@@ -22,13 +23,19 @@ so price-based ratios are only trustworthy for recent dates until as-traded pric
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import UTC, date, datetime, time, timedelta
 
-from sqlalchemy.orm import Session
-
-from fin_core.db import repo
-from fin_core.models import AnnualPoint, SecurityMetrics
-from fin_domain.market_data import ANNUAL_DAYS, Series, annual_series
+from fin_domain.market_data import (
+    ANNUAL_DAYS,
+    Fact,
+    PriceBar,
+    Security,
+    Series,
+    annual_series,
+    known_as_of,
+)
+from fin_domain.scoring.models import AnnualPoint, SecurityMetrics
 
 STALE_FUNDAMENTALS = timedelta(days=548)  # ~18 months without a new annual report
 STALE_PRICE = timedelta(days=7)
@@ -44,10 +51,6 @@ MULTI_CLASS_TICKERS = frozenset(
     {"BRK-A", "BRK-B", "GOOG", "GOOGL", "FOX", "FOXA", "NWS", "NWSA", "BF-A", "BF-B", "LEN",
      "LEN-B", "UA", "UAA", "HEI", "HEI-A"}
 )  # fmt: skip
-
-
-class UnknownSecurityError(LookupError):
-    pass
 
 
 def _latest_common(series: Series, a: str, b: str) -> tuple[date, float, float] | None:
@@ -91,16 +94,26 @@ def average_eps_3y(eps: list[tuple[date, float]], latest_fy: date | None) -> flo
     return sum(v for _, v in last3) / 3
 
 
-def compute_metrics(session: Session, ticker: str, as_of: date | datetime) -> SecurityMetrics:
-    sec = repo.get_security(session, ticker)
-    if sec is None:
-        raise UnknownSecurityError(ticker)
-
+def resolve_as_of(as_of: date | datetime) -> tuple[datetime, date]:
+    """``as_of`` as an aware UTC moment and its day. A plain date means the end of that day; a
+    naive datetime is taken as UTC."""
     if isinstance(as_of, datetime):
-        as_of_dt = as_of if as_of.tzinfo else as_of.replace(tzinfo=UTC)
+        moment = as_of if as_of.tzinfo else as_of.replace(tzinfo=UTC)
     else:
-        as_of_dt = datetime.combine(as_of, time(23, 59, 59), tzinfo=UTC)
-    as_of_date = as_of_dt.date()
+        moment = datetime.combine(as_of, time(23, 59, 59), tzinfo=UTC)
+    return moment, moment.date()
+
+
+def calculate_metrics(
+    security: Security,
+    facts: Iterable[Fact],
+    latest_bar: PriceBar | None,
+    as_of: date | datetime,
+) -> SecurityMetrics:
+    """``facts``: every stored version filed on or before ``as_of``; ``latest_bar``: the latest
+    bar at or before it (``None`` if there is none)."""
+    sec_ticker = str(security.ticker)
+    as_of_dt, as_of_date = resolve_as_of(as_of)
 
     warnings: list[str] = []
     blockers: list[str] = []
@@ -109,8 +122,8 @@ def compute_metrics(session: Session, ticker: str, as_of: date | datetime) -> Se
         warnings.append(message)
         blockers.append(message)
 
-    series = annual_series(repo.facts_as_of(session, sec.id, as_of_date))
-    bar = repo.latest_price(session, sec.id, as_of_dt)
+    series = annual_series(known_as_of(facts, as_of_date))
+    bar = latest_bar
 
     price = price_date = None
     if bar is None:
@@ -163,7 +176,7 @@ def compute_metrics(session: Session, ticker: str, as_of: date | datetime) -> Se
             )
     bvps = equity / shares if equity is not None and shares else None
     pb = price / bvps if price is not None and bvps else None
-    if sec.ticker in MULTI_CLASS_TICKERS:
+    if sec_ticker in MULTI_CLASS_TICKERS:
         warnings.append(
             "multiple share classes: share counts and per-share values may cover one class "
             "only, so book value per share and P/B are not reported"
@@ -216,7 +229,7 @@ def compute_metrics(session: Session, ticker: str, as_of: date | datetime) -> Se
         dividend_years = consecutive_positive_years(dps)
 
     return SecurityMetrics(
-        ticker=sec.ticker,
+        ticker=sec_ticker,
         as_of=as_of_dt,
         price=price,
         price_date=price_date,
@@ -231,8 +244,8 @@ def compute_metrics(session: Session, ticker: str, as_of: date | datetime) -> Se
         eps=eps,
         book_value_per_share=bvps,
         latest_fiscal_year_end=latest_fy,
-        sector=sec.sector,
-        multi_class=sec.ticker in MULTI_CLASS_TICKERS,
+        sector=security.sector,
+        multi_class=sec_ticker in MULTI_CLASS_TICKERS,
         annual={
             c: [AnnualPoint(period_end=e, value=v) for e, v in pts] for c, pts in series.items()
         },

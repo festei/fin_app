@@ -17,10 +17,10 @@ from datetime import UTC, date, datetime
 
 import pytest
 
-from fin_core.graph import load_config
-from fin_core.graph.data import cagr
-from fin_core.graph.nodes.lynch import classify, score_lynch
-from fin_core.models import AnnualPoint, ScoreResult, SecurityMetrics
+from fin_config import load_scoring_config as load_config
+from fin_domain.scoring import AnnualPoint, ScoreResult, SecurityMetrics
+from fin_domain.scoring.philosophies.lynch import classify, score_lynch
+from fin_domain.scoring.series import cagr
 
 CFG = load_config()["lynch"]
 YEARS = list(range(2015, 2025))

@@ -8,6 +8,7 @@ from fin_testkit.market_data import (
     InMemorySecurityRepository,
     InMemoryYieldRepository,
 )
+from fin_testkit.scoring import FakeScoringConfig, FakeScoringEngine
 from fin_testkit.sources import (
     FakeFundamentalsSource,
     FakePriceSource,
@@ -25,6 +26,8 @@ __all__ = [
     "FakeClock",
     "FakeFundamentalsSource",
     "FakePriceSource",
+    "FakeScoringConfig",
+    "FakeScoringEngine",
     "FakeUniverse",
     "FakeYieldSource",
     "InMemoryFactRepository",

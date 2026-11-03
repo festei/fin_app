@@ -25,9 +25,9 @@ from __future__ import annotations
 from statistics import mean
 from typing import Any
 
-from fin_core.graph.data import recent_years as _recent
-from fin_core.graph.data import series_by_year as _series
-from fin_core.models import Criterion, ScoreResult, SecurityMetrics
+from fin_domain.scoring.models import Criterion, ScoreResult, SecurityMetrics
+from fin_domain.scoring.series import recent_years as _recent
+from fin_domain.scoring.series import series_by_year as _series
 
 NAME = "buffett"
 
@@ -237,10 +237,3 @@ def score_buffett(m: SecurityMetrics, cfg: dict[str, Any]) -> ScoreResult:
         evidence=evidence,
         explanation=f"Passes {passed} of {len(criteria)} Buffett-style quality and value criteria.",
     )
-
-
-def buffett_node(state: dict[str, Any]) -> dict[str, Any]:
-    cfg = state["config"]["buffett"]
-    if cfg.get("impl", "deterministic") != "deterministic":
-        raise NotImplementedError("LLM-backed Buffett node is not implemented yet")
-    return {"philosophy_results": {NAME: score_buffett(state["metrics"], cfg)}}

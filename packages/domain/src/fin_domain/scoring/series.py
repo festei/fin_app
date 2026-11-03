@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from statistics import mean
 
-from fin_core.models import SecurityMetrics
+from fin_domain.scoring.models import SecurityMetrics
 
 # a fiscal year is 52-53 weeks or a calendar year; consecutive year ends are 350-380 days apart
 YEAR_GAP_DAYS = (350, 380)

@@ -3,7 +3,6 @@ working for the modules that still use it (metrics, signals, sandbox, alerts, th
 goes away with the last of them."""
 
 from fin_persistence.repo import (
-    facts_as_of,
     get_security,
     latest_price,
     latest_yield,
@@ -15,7 +14,6 @@ from fin_persistence.repo import (
 )
 
 __all__ = [
-    "facts_as_of",
     "get_security",
     "latest_price",
     "latest_yield",

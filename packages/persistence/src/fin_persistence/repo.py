@@ -8,7 +8,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from fin_persistence.tables import BondYield, FundamentalFact, PriceBar, Security
@@ -118,39 +118,6 @@ def upsert_facts(session: Session, security_id: int, facts: Sequence[dict[str, A
     for chunk in _chunks(rows):
         session.execute(stmt, list(chunk))
     return len(rows)
-
-
-def facts_as_of(
-    session: Session, security_id: int, as_of: date, concepts: Sequence[str] | None = None
-) -> list[FundamentalFact]:
-    """Point-in-time view: for every (tag, unit, period) the latest version FILED on or before
-    ``as_of``. A restatement filed after ``as_of`` is invisible, so no look-ahead."""
-    rn = (
-        func.row_number()
-        .over(
-            partition_by=(
-                FundamentalFact.tag,
-                FundamentalFact.unit,
-                FundamentalFact.period_start,
-                FundamentalFact.period_end,
-            ),
-            order_by=(FundamentalFact.filed.desc(), FundamentalFact.id.desc()),
-        )
-        .label("rn")
-    )
-    inner = select(FundamentalFact.id, rn).where(
-        FundamentalFact.security_id == security_id, FundamentalFact.filed <= as_of
-    )
-    if concepts:
-        inner = inner.where(FundamentalFact.concept.in_(list(concepts)))
-    sub = inner.subquery()
-    q = (
-        select(FundamentalFact)
-        .join(sub, FundamentalFact.id == sub.c.id)
-        .where(sub.c.rn == 1)
-        .order_by(FundamentalFact.concept, FundamentalFact.period_end)
-    )
-    return list(session.scalars(q))
 
 
 # --- bond yields ------------------------------------------------------------------------

@@ -23,11 +23,24 @@ Beneish M-score (earnings manipulation) needs receivables, SG&A and PP&E and is 
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
-from fin_core.graph.data import previous_year, series_by_year, shares_for_year
-from fin_core.models import Criterion, ScoreResult, SecurityMetrics
+from fin_domain.scoring.models import Criterion, ScoreResult, SecurityMetrics
+from fin_domain.scoring.series import previous_year, series_by_year, shares_for_year
+
+
+@dataclass
+class GuardrailVerdict:
+    """What the guardrails conclude: whether conviction must be capped, and why."""
+
+    veto: bool = False
+    results: dict[str, ScoreResult] = field(default_factory=dict)
+    reasons: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
 
 PIOTROSKI = "piotroski"
 ALTMAN = "altman_z"
@@ -191,8 +204,9 @@ def _profitable_and_cash_generative(m: SecurityMetrics) -> bool:
     return bool(common) and ni[max(common)] > 0 and cfo[max(common)] > 0
 
 
-def guardrails_node(state: dict[str, Any]) -> dict[str, Any]:
-    """Cap conviction (via ``guardrail_veto``) for very weak or distressed companies.
+def assess_guardrails(m: SecurityMetrics, cfg: Mapping[str, Any]) -> GuardrailVerdict:
+    """Cap conviction (``veto``) for very weak or distressed companies. ``cfg`` is the
+    ``guardrails`` section of the scoring configuration.
 
     Altman Z'' alone can be fooled: a profitable company that returns cash through large
     buybacks has negative retained earnings and equity, which pushes Z'' into the distress
@@ -201,20 +215,13 @@ def guardrails_node(state: dict[str, Any]) -> dict[str, Any]:
     it becomes a note. A very weak Piotroski score vetoes on its own. When health cannot be
     shown (no cash-flow data) the distress zone still vetoes.
     """
-    cfg = state["config"].get("guardrails", {})
-    m: SecurityMetrics = state["metrics"]
-    empty = {"guardrail_veto": False, "guardrail_reasons": [], "guardrail_notes": []}
     if not cfg.get("enabled", True):
-        return {**empty, "guardrail_results": {}}
+        return GuardrailVerdict()
     if m.sector in cfg.get("skip_sectors", []):
         why = f"not meaningful for the {m.sector} sector"
-        return {
-            **empty,
-            "guardrail_results": {
-                PIOTROSKI: _abstain(PIOTROSKI, why),
-                ALTMAN: _abstain(ALTMAN, why),
-            },
-        }
+        return GuardrailVerdict(
+            results={PIOTROSKI: _abstain(PIOTROSKI, why), ALTMAN: _abstain(ALTMAN, why)}
+        )
 
     p_result, passes, evaluable = piotroski(m, cfg)
     a_result, z = altman(m, cfg)
@@ -244,9 +251,9 @@ def guardrails_node(state: dict[str, Any]) -> dict[str, Any]:
             a_result.evidence.append(note)
         else:
             reasons.append(f"Altman Z'' {z:.2f} is in the distress zone")
-    return {
-        "guardrail_veto": bool(reasons),
-        "guardrail_results": {PIOTROSKI: p_result, ALTMAN: a_result},
-        "guardrail_reasons": reasons,
-        "guardrail_notes": notes,
-    }
+    return GuardrailVerdict(
+        veto=bool(reasons),
+        results={PIOTROSKI: p_result, ALTMAN: a_result},
+        reasons=reasons,
+        notes=notes,
+    )
