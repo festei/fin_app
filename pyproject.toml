@@ -5,30 +5,292 @@ requires-python = ">=3.12"
 dependencies = []
 
 [tool.uv.workspace]
-members = ["packages/core", "apps/api", "flows"]
+members = [
+    "packages/core",
+    "packages/domain",
+    "packages/application",
+    "packages/persistence",
+    "packages/providers",
+    "packages/telegram",
+    "packages/langgraph",
+    "packages/config",
+    "packages/bootstrap",
+    "packages/testkit",
+    "apps/api",
+    "apps/worker",
+    "flows",
+]
 
 [tool.uv.sources]
 fin-core = { workspace = true }
+fin-domain = { workspace = true }
+fin-application = { workspace = true }
+fin-persistence = { workspace = true }
+fin-providers = { workspace = true }
+fin-telegram = { workspace = true }
+fin-langgraph = { workspace = true }
+fin-config = { workspace = true }
+fin-bootstrap = { workspace = true }
+fin-testkit = { workspace = true }
 fin-api = { workspace = true }
+fin-worker = { workspace = true }
 fin-flows = { workspace = true }
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.6", "httpx>=0.27"]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.6",
+    "httpx>=0.27",
+    "import-linter>=2.0",
+]
 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B"]
+# TID251 (banned imports) and DTZ (naive datetimes) apply to the protected core only: they are
+# switched off below for every other path. See docs/specs/009-hexagonal-redesign.md.
+select = ["E", "F", "I", "UP", "B", "TID251", "DTZ"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["fin_core", "fin_api", "fin_flows"]
+known-first-party = [
+    "fin_core",
+    "fin_domain",
+    "fin_application",
+    "fin_persistence",
+    "fin_providers",
+    "fin_telegram",
+    "fin_langgraph",
+    "fin_config",
+    "fin_bootstrap",
+    "fin_testkit",
+    "fin_api",
+    "fin_worker",
+    "fin_flows",
+]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"sqlalchemy".msg = "The core must not know about the database; use a port (fin_application.ports)."
+"alembic".msg = "The core must not know about the database; use a port (fin_application.ports)."
+"psycopg".msg = "The core must not know about the database; use a port (fin_application.ports)."
+"httpx".msg = "The core must not do I/O; use a port (fin_application.ports)."
+"pandas".msg = "The core must not depend on pandas; map provider frames in an adapter."
+"yfinance".msg = "The core must not do I/O; use a port (fin_application.ports)."
+"yaml".msg = "The core must not read config files; use a config port."
+"langgraph".msg = "LangGraph is an adapter (fin_langgraph), not part of the core."
+"fastapi".msg = "The core must not know about HTTP."
+"prefect".msg = "The core must not know about the scheduler."
+"pydantic".msg = "The core is standard library only; validate with dataclasses."
+"os".msg = "The core must not read the environment or touch the filesystem; inject a port."
+"pathlib".msg = "The core must not touch the filesystem; inject a port."
+"sqlite3".msg = "The core must not know about the database; use a port (fin_application.ports)."
+"socket".msg = "The core must not do I/O; use a port (fin_application.ports)."
+"urllib".msg = "The core must not do I/O; use a port (fin_application.ports)."
+
+[tool.ruff.lint.per-file-ignores]
+# the architecture test reads the core's source files, so it may use pathlib
+"packages/domain/tests/test_core_isolation.py" = ["TID251"]
+"packages/core/**" = ["TID251", "DTZ"]
+"packages/persistence/**" = ["TID251", "DTZ"]
+# fixtures are imported by name from db_fixtures.py (see its docstring)
+"packages/persistence/tests/**" = ["TID251", "DTZ", "F811"]
+"packages/providers/**" = ["TID251", "DTZ"]
+"packages/telegram/**" = ["TID251", "DTZ"]
+"packages/langgraph/**" = ["TID251", "DTZ"]
+"packages/config/**" = ["TID251", "DTZ"]
+"packages/bootstrap/**" = ["TID251", "DTZ"]
+"apps/**" = ["TID251", "DTZ"]
+"flows/**" = ["TID251", "DTZ"]
+"scripts/**" = ["TID251", "DTZ"]
 
 [tool.pytest.ini_options]
-testpaths = ["packages/core/tests", "apps/api/tests", "flows/tests"]
+testpaths = [
+    "packages/core/tests",
+    "packages/domain/tests",
+    "packages/application/tests",
+    "packages/testkit/tests",
+    "packages/persistence/tests",
+    "packages/config/tests",
+    "packages/bootstrap/tests",
+    "apps/api/tests",
+    "flows/tests",
+]
 asyncio_mode = "auto"
 markers = [
     "postgres: needs a real Postgres (set TEST_DATABASE_URL); skipped otherwise",
     "live: calls the real SEC/FRED APIs (set RUN_LIVE_TESTS=1 plus credentials); skipped otherwise",
 ]
+
+# --- Architecture boundaries (docs/specs/009-hexagonal-redesign.md) -------------------------------
+# Run with `uv run lint-imports`. Contracts marked RATCHET list today's violations in
+# `ignore_imports`; every migration step deletes the entries it fixes, and the list must reach
+# zero. Never add an entry to make a contract pass.
+[tool.importlinter]
+root_packages = [
+    "fin_domain",
+    "fin_application",
+    "fin_persistence",
+    "fin_providers",
+    "fin_telegram",
+    "fin_langgraph",
+    "fin_config",
+    "fin_bootstrap",
+    "fin_testkit",
+    "fin_api",
+    "fin_worker",
+    "fin_flows",
+    "fin_core",
+]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Layers: apps > bootstrap > adapters > application > domain"
+type = "layers"
+layers = [
+    "fin_api | fin_worker | fin_flows",
+    "fin_bootstrap",
+    "fin_persistence | fin_providers | fin_telegram | fin_langgraph | fin_config",
+    "fin_application",
+    "fin_domain",
+]
+
+[[tool.importlinter.contracts]]
+name = "Adapters are independent of each other"
+type = "independence"
+modules = [
+    "fin_persistence",
+    "fin_providers",
+    "fin_telegram",
+    "fin_langgraph",
+    "fin_config",
+]
+
+[[tool.importlinter.contracts]]
+name = "Apps reach adapters only through fin_bootstrap"
+type = "forbidden"
+# Direct imports only: until step 6 apps still reach adapters through the legacy fin_core, and
+# the "apps do not import fin_core" ratchet below is what removes those paths.
+allow_indirect_imports = true
+source_modules = ["fin_api", "fin_worker", "fin_flows"]
+forbidden_modules = [
+    "fin_persistence",
+    "fin_providers",
+    "fin_telegram",
+    "fin_langgraph",
+    "fin_config",
+]
+
+[[tool.importlinter.contracts]]
+name = "The core imports no framework, driver or I/O module"
+type = "forbidden"
+source_modules = ["fin_domain", "fin_application"]
+forbidden_modules = [
+    "sqlalchemy",
+    "alembic",
+    "psycopg",
+    "httpx",
+    "pandas",
+    "yfinance",
+    "yaml",
+    "langgraph",
+    "fastapi",
+    "prefect",
+    "pydantic",
+    "pydantic_settings",
+    "os",
+    "pathlib",
+    "sqlite3",
+    "socket",
+    "urllib",
+]
+
+[[tool.importlinter.contracts]]
+name = "The domain does not depend on the application layer or any adapter"
+type = "forbidden"
+source_modules = ["fin_domain"]
+forbidden_modules = [
+    "fin_application",
+    "fin_persistence",
+    "fin_providers",
+    "fin_telegram",
+    "fin_langgraph",
+    "fin_config",
+    "fin_bootstrap",
+    "fin_core",
+]
+
+[[tool.importlinter.contracts]]
+name = "Domain contexts form a one-way chain: sandbox > signals > scoring > market_data > shared"
+type = "layers"
+containers = ["fin_domain"]
+layers = ["sandbox", "signals", "scoring", "market_data", "shared"]
+
+[[tool.importlinter.contracts]]
+name = "RATCHET: apps do not import the legacy fin_core"
+type = "forbidden"
+source_modules = ["fin_api", "fin_worker", "fin_flows"]
+forbidden_modules = ["fin_core"]
+ignore_imports = [
+    "fin_api.main -> fin_core",
+    "fin_api.main -> fin_core.alerts.pipeline",
+    "fin_api.main -> fin_core.db.models",
+    "fin_api.main -> fin_core.db.repo",
+    "fin_api.main -> fin_core.db.session",
+    "fin_api.main -> fin_core.db.signals_repo",
+    "fin_api.main -> fin_core.features",
+    "fin_api.main -> fin_core.graph",
+    "fin_api.main -> fin_core.graph.build",
+    "fin_api.main -> fin_core.metrics",
+    "fin_api.main -> fin_core.models",
+    "fin_api.main -> fin_core.sandbox.engine",
+    "fin_api.main -> fin_core.scoring",
+    "fin_api.worker -> fin_core.alerts.base",
+    "fin_api.worker -> fin_core.alerts.channels",
+    "fin_api.worker -> fin_core.alerts.pipeline",
+    "fin_api.worker -> fin_core.alerts.policy",
+    "fin_api.worker -> fin_core.alerts.telegram",
+    "fin_api.worker -> fin_core.db.session",
+    "fin_api.worker -> fin_core.features",
+    "fin_flows.ingestion -> fin_core.db.session",
+    "fin_flows.ingestion -> fin_core.ingest",
+    "fin_flows.ingestion -> fin_core.providers.edgar",
+    "fin_flows.ingestion -> fin_core.providers.fred",
+    "fin_flows.ingestion -> fin_core.providers.yfinance_provider",
+    "fin_flows.ingestion -> fin_core.universe",
+    "fin_flows.sandbox -> fin_core.db.session",
+    "fin_flows.sandbox -> fin_core.sandbox.run",
+    "fin_flows.scoring -> fin_core.db.session",
+    "fin_flows.scoring -> fin_core.scoring_run",
+]
+
+[[tool.importlinter.contracts]]
+name = "RATCHET: the HTTP app does not import SQLAlchemy"
+type = "forbidden"
+source_modules = ["fin_api"]
+forbidden_modules = ["sqlalchemy"]
+allow_indirect_imports = true
+ignore_imports = [
+    "fin_api.main -> sqlalchemy",
+    "fin_api.worker -> sqlalchemy",
+]
+
+[[tool.importlinter.contracts]]
+name = "Production code never imports the test kit"
+type = "forbidden"
+source_modules = [
+    "fin_domain",
+    "fin_application",
+    "fin_persistence",
+    "fin_providers",
+    "fin_telegram",
+    "fin_langgraph",
+    "fin_config",
+    "fin_bootstrap",
+    "fin_api",
+    "fin_worker",
+    "fin_flows",
+    "fin_core",
+]
+forbidden_modules = ["fin_testkit"]

@@ -1,6 +1,6 @@
 # DISABLED for now: CI/CD is deferred to a later stage (everything is tested locally first).
 # Only manual runs (workflow_dispatch) are possible. Local equivalents:
-#   uv run ruff check . && uv run ruff format --check . && uv run pytest
+#   uv run ruff check . && uv run ruff format --check . && uv run lint-imports && uv run pytest
 #   (cd apps/web && pnpm typecheck && pnpm test && pnpm build)
 #   scripts/smoke-images.sh
 #
@@ -59,6 +59,7 @@ jobs:
       - run: uv sync --all-packages --frozen
       - run: uv run ruff check .
       - run: uv run ruff format --check .
+      - run: uv run lint-imports
       - run: uv run pytest -q
 
   web:

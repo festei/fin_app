@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "Shared domain logic: providers, metrics, philosophy graph, signals"
 requires-python = ">=3.12"
 dependencies = [
+    "fin-persistence",
+    "fin-config",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
     "pyyaml>=6",

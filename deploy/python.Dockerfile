@@ -9,6 +9,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 COPY packages ./packages
 COPY apps/api ./apps/api
+COPY apps/worker ./apps/worker
 COPY flows ./flows
 # --no-editable: install workspace packages into the venv. The default editable install only
 # leaves .pth links to /app/packages, which the final stage does not copy (ImportError at start).

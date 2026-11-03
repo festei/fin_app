@@ -8,15 +8,12 @@ from pathlib import Path
 
 import yaml
 
+from fin_config import ConfigLocator
 from fin_core.db.models import AlertRecord
 
 
 def _default_path() -> Path:
-    for parent in Path(__file__).resolve().parents:
-        candidate = parent / "config" / "alerts.yml"
-        if candidate.exists():
-            return candidate
-    raise FileNotFoundError("config/alerts.yml not found")
+    return ConfigLocator().path("alerts.yml")
 
 
 def _utc(dt: datetime) -> datetime:

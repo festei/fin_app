@@ -1,0 +1,289 @@
+# Spec 009: Redesign around DDD and hexagonal architecture
+
+## 1. Context
+
+`fin_core` is one package in which domain rules, use cases and infrastructure live side by side.
+A coupling inventory of the current code found:
+
+- **No domain layer.** Only the scoring graph (`graph/*`), the pydantic DTOs in `models.py`, and parts of `metrics/`, `alerts/policy.py` and `sandbox/config.py` are I/O-free.
+- **Rules are hidden in infrastructure.**
+  - Hysteresis (`armed_state`) and "actionable score" live in SQL in `db/signals_repo.py`.
+  - Fill, holdings and strategy rules are interleaved with `select()` and ORM mutation in `sandbox/engine.py` (468 lines).
+  - `ingest.py` mixes job-run tracking with ingestion and raw queries.
+- **ORM rows leak upward.** `AlertPolicy.decide`, `annual_series`, `build_message_text` and all of `sandbox.engine` take or return ORM objects. `fin_api/main.py` (840 lines) imports `fin_core.db.models` and holds 9 inline `select()` calls plus business logic (candle aggregation, score-history windowing, portfolio views).
+- **Hidden dependencies inside the core.**
+  - Business constants sit in the wrong place: `BUY_REARM_BELOW` in `graph/build.py`, `CONCEPT_TAGS` in `providers/`.
+  - Config discovery walks `__file__.parents` in 5 places; `os.environ` is read in 6 modules; `datetime.now()` is called in 7.
+  - `ScoreRecord.details` is an untyped JSON contract between `signals/engine._details` and 3 readers.
+- **Nothing enforces boundaries.** No import-linter and no architecture test exist.
+
+**Goal.** A protected core (domain plus application) that depends on nothing outside itself, with every
+I/O concern (database, HTTP providers, Telegram, LangGraph, YAML/env config) as an adapter behind a port.
+"Protected" means the boundary is a build and CI fact, not a convention.
+
+**Non-goals.**
+- No behaviour change, no new features.
+- No schema change: Alembic revisions 0001-0004 stay, and the stored `scores.details` JSON keeps its current shape.
+- No message broker and no microservices.
+- The web app is untouched, and the HTTP API contract is unchanged.
+
+## 2. Decisions taken
+
+| Question | Decision |
+| --- | --- |
+| Physical protection | Separate uv workspace packages. The domain package declares **zero** third-party dependencies, so `import sqlalchemy` cannot resolve there. import-linter and ruff back it up. |
+| Domain split | Four bounded contexts: Market Data, Scoring, Signals & Alerts, Trading Sandbox, plus a small shared kernel. |
+| Domain vs ORM | Pure domain entities plus explicit mappers in the persistence adapter. The tables are unchanged. |
+| Rollout | Strangler, one context at a time. The full suite is green and there is one commit after each step. |
+
+Decisions I made while designing (flagged so you can overrule them):
+
+1. **Ports live in the application layer, not the domain.** The domain has no I/O abstractions. Aggregate methods take plain data and `now`, and never call a repository. The use case loads, calls the domain, saves.
+2. **The domain uses stdlib only** (frozen dataclasses with `__post_init__` invariants), not pydantic. Serialisation lives in adapters. This costs a rewrite of the pydantic models in `models.py`, and buys a truly dependency-free core.
+3. **`decide` leaves the LangGraph.** Scoring becomes stateless (philosophies, guardrails, aggregate produce an `Assessment`). The stateful transition rule (previous conviction, hysteresis, blockers) becomes the Signals context's `SignalDecider`. Behaviour is identical; the graph loses `previous_conviction`/`buy_armed`/`sell_armed` from its state.
+4. **Contexts reference each other by `Ticker`** (a value object), never by database integer id. Ints exist only inside the persistence adapter.
+5. **Cross-context order is a one-way chain**, enforced by an import-linter `layers` contract:
+   `sandbox → signals → scoring → market_data → shared`.
+6. **Reads use query ports** (CQRS-lite): the write side goes through aggregates and repositories, and the read side returns DTOs from query services backed by SQL. This is where the API's inline `select()`s go.
+
+## 3. Target architecture
+
+```
+                    DRIVING ADAPTERS (call the core)
+   fin_api (FastAPI)   fin_worker (retries, bot)   fin_flows (Prefect)   scripts/seed_demo
+        └─────────────────────────┬────────────────────────┘
+                                  ▼  (only via fin_bootstrap's Container)
+  ┌───────────────────────── THE PROTECTED CORE ─────────────────────────┐
+  │  fin_application   use cases · DTOs · read-model queries · PORTS      │
+  │        ▲ depends on                                                   │
+  │  fin_domain        shared kernel · market_data · scoring ·            │
+  │                    signals · sandbox   (stdlib only, no ports)        │
+  └──────────────────────────────────────────────────────────────────────┘
+                                  ▲  implemented by
+                    DRIVEN ADAPTERS (the core calls them via ports)
+   fin_persistence   fin_providers   fin_telegram   fin_langgraph   fin_config
+   (SQLAlchemy,      (httpx, pandas, (httpx;        (langgraph)     (yaml, env,
+    Alembic, UoW,     yfinance)       channel + bot                  file discovery)
+    mappers, queries,                 inbound)
+    leader lock)
+```
+
+**Dependency rule.** `fin_domain ← fin_application ← adapters ← fin_bootstrap ← apps`. Arrows only point inward.
+Adapters never import each other. Apps import adapters **only** through `fin_bootstrap`.
+
+### 3.1 Workspace packages
+
+| Package (dir) | Import name | Third-party deps | Role |
+| --- | --- | --- | --- |
+| `packages/domain` | `fin_domain` | **none** | Entities, value objects, domain services, domain events, domain errors. |
+| `packages/application` | `fin_application` | **none** | Use cases, command/query DTOs, driven-port Protocols, application errors. |
+| `packages/persistence` | `fin_persistence` | sqlalchemy, alembic, psycopg | ORM tables, mappers, repositories, `SqlUnitOfWork`, query services, migrations, `LeaderLock` as `SingleInstanceGuard`. |
+| `packages/providers` | `fin_providers` | httpx, pandas, yfinance | EDGAR, FRED, yfinance, Alpha Vantage clients. |
+| `packages/telegram` | `fin_telegram` | httpx | `TelegramChannel` (driven) and `TelegramBot` (driving). The bot calls application use cases and has no DB access. |
+| `packages/langgraph` | `fin_langgraph` | langgraph | `ScoringEngine` adapter that wires the domain scorers into a `StateGraph`. |
+| `packages/config` | `fin_config` | pyyaml | One `ConfigLocator`, YAML/env loaders, `FeatureFlags`, universe files. Implements the config ports. |
+| `packages/bootstrap` | `fin_bootstrap` | all adapters | `Settings` (the only env reader) and `Container` (the composition root). |
+| `packages/testkit` | `fin_testkit` | `fin-application` | In-memory fakes of the ports for tests. No production package may import it (import-linter). Added in step 1. |
+| `apps/api` | `fin_api` | fastapi, uvicorn | HTTP only: routers per context, schemas, error mapping. |
+| `apps/worker` | `fin_worker` | none extra | Moved out of `fin_api`. Retry loop, bot loop, shutdown. |
+| `flows` | `fin_flows` | prefect | Thin wrappers over use cases. |
+
+`fin_core` stays as a shrinking legacy package, with re-export shims, until step 6 deletes it.
+
+### 3.2 The domain (`fin_domain`)
+
+Every package below is a context. Contexts expose only their own public types.
+
+**`shared`**: `Ticker` (VO: validates and uppercases), `DomainError` family (`InvariantViolation`, `NotFound`), `DomainEvent` base, `AsOf`, `JobRun` aggregate
+(status is `failed` until completed; `partial`/`ok`/`failed` derivation; stale-run expiry rule; moved from `ingest.py`).
+
+**`market_data`**
+- Aggregate `Security` (ticker, cik, name, kind, sector, active; the "absent columns are left alone" merge rule becomes `Security.merged_with(update)`).
+- VOs `PriceBar`, `Fact` (concept, tag, unit, period, filed, accession, value; instant facts keep `period_start == period_end`), `BondYield`.
+- Domain services `PointInTimeFacts` (the `facts_as_of` rule: latest version filed on or before `as_of`), `FiscalYearSeries` (from `metrics/annual.py`: 10-K family only, duration windows, tag priority, derived `TotalDebt`, single-source share counts), `restated()` (price restatement tolerance), `aggregate_candles()` (from `main.py:_aggregate`).
+- Constants `CONCEPT_TAGS`/`TAG_TO_CONCEPT` move here from `providers/edgar_concepts.py`.
+
+**`scoring`** (stateless)
+- VOs `SecurityMetrics`, `AnnualPoint`, `Criterion`, `ScoreResult`, `GuardrailVerdict`, `Assessment` (conviction or `None`, per-philosophy results, guardrail reasons/notes, `signal_blockers`, explanation). The `Assessment` is a typed replacement for the untyped `details` dict.
+- Services:
+  - `MetricsCalculator` (the pure part of `compute_metrics`: ratios, staleness thresholds, blockers, same-fiscal-year rule, multi-class list)
+  - five pure scorers: `GrahamScorer`, `BuffettScorer`, `LynchScorer`, `GreenblattScorer`, `FisherScorer`
+  - `Guardrails` (Piotroski, Altman)
+  - `Aggregator` (weighted mean, abstention, guardrail cap)
+- Typed config VOs `PhilosophyConfig`, `GuardrailConfig`. `PhilosophyScorer` is a domain Protocol, so deterministic and LLM scorers stay swappable.
+
+**`signals`** (stateful decisions)
+- Aggregates:
+  - `Signal` (lifecycle: awaiting decision → processed or suppressed with reason)
+  - `Alert` with `Delivery` entities (status machine pending → sent/failed/skipped; `claim()`, `mark_sent()`, `mark_failed()` with backoff; `attempts` is the optimistic-concurrency version)
+  - `Watchlist`
+  - `ChannelState` (mute window)
+- Services:
+  - `SignalDecider` (transition across 70/50, hysteresis 65/55, `emerging` when no baseline, withheld on blockers; constants move here)
+  - `AlertPolicy` (cooldown, material change, sell-only-for-watchlist, severity, retry schedule; takes a `LastAlert` VO, not an ORM row)
+  - `AlertComposer` (the message text; the "Use /why" hint is a channel concern passed in)
+- `ScoreEntry` VO plus the pure rules "actionable" (conviction set and not blocked) and `is_armed(convictions_since_last_signal)`, moved out of SQL.
+- Events: `ScoreRecorded`, `SignalRaised`, `AlertCreated`.
+
+**`sandbox`**
+- Aggregate `Portfolio` (cash, fee, mode, `StrategyRules`, `last_processed_signal`) owning `Order` entities (pending/filled/rejected/cancelled).
+- Methods: `place_order`, `cancel_order`, `settle(price_book, now)`, `apply_signals(signals, price_book)`, `holdings(price_book)`, `snapshot(price_book)`.
+- Services:
+  - `FillModel` (fills on the first bar after the decision day, adjusted price, sells before buys on the same close)
+  - `HoldingsLedger` (average cost, restated by `fill price / current bar close`, buy fees in cost basis)
+  - `StrategySizing` (`position_pct`, `max_positions`, `min_cash_pct`, pending-buy reservation)
+- VOs `Money`, `Quantity`, `FeeBps`, `OrderSide`, `Holding`, `PortfolioSnapshot`, `StrategyRules` (validation moves here from `sandbox/config.py`).
+- Limits (`MAX_QUANTITY` etc.) are domain constants.
+
+**Domain purity rules.**
+- No `datetime.now()`: `now` and `as_of` are parameters (tz-aware UTC only; naive-SQLite handling stays in the persistence mappers, which removes the three duplicated `_utc` helpers).
+- No `os`, `logging` config, files or network.
+- Money is `Decimal`.
+
+### 3.3 The application layer (`fin_application`)
+
+- **Driving side**: one class per use case with `execute(command) -> result`.
+  - Market Data: `SyncUniverse`, `IngestPrices`, `IngestFundamentals`, `IngestYields`
+  - Scoring/Signals: `ScoreSecurityLive` (API), `RunScoring`, `ProcessSignals`, `DeliverDueAlerts`, `MarkAlertRead`, `Watch`/`Unwatch`, `MuteChannel`
+  - Sandbox: `CreatePortfolio`, `PlaceOrder`, `CancelOrder`, `RunSandbox`
+  - Telegram bot commands become use cases too (`ExplainScore`, `TopOpportunities`, …).
+- **Read side**: query ports returning frozen DTOs: `OpportunityQuery`, `SecuritySearchQuery`, `PriceHistoryQuery`, `ScoreHistoryQuery`, `AlertFeedQuery`, `PortfolioViewQuery`, `ChannelStatusQuery`. The candle, windowing and position-view *rules* stay in domain or application code. Only the SQL goes to the adapter.
+- **Driven ports (Protocols)**:
+  - Storage: `UnitOfWork`/`UnitOfWorkFactory` (one transaction each, preserving today's per-security and per-signal transactions) exposing `SecurityRepository`, `PriceRepository`, `FactRepository`, `YieldRepository`, `ScoreRepository`, `SignalRepository`, `AlertRepository`, `WatchlistRepository`, `ChannelStateRepository`, `PortfolioRepository`, `JobRunRepository`.
+  - Outbound services: `PriceProvider`, `FundamentalsProvider`, `YieldProvider`, `AlertChannel`, `ScoringEngine`.
+  - Config and environment: `ScoringConfigProvider`, `AlertPolicyConfigProvider`, `SandboxConfigProvider`, `UniverseSource`, `FeatureFlagProvider`.
+  - Runtime: `Clock`, `SingleInstanceGuard`, `BotCursorStore`.
+- **Concurrency without leaking SQL**: `PortfolioRepository.load_exclusive(id)` replaces `FOR UPDATE`. Delivery claiming becomes optimistic: `AlertRepository.save(alert, expected_version)` raises `ConcurrencyConflict`, and the adapter implements it with the same compare-and-set on `attempts`. Send-after-commit ordering is unchanged.
+- **Errors**: `NotFound`, `InvalidCommand`, `ConcurrencyConflict`, `ProviderError`/`RateLimitError`/`AccessDeniedError` (moved from `providers/base.py` because they are part of the port contract). The API maps them to 404/422/503.
+
+### 3.4 Adapters
+
+- **`fin_persistence`**
+  - `tables.py` (today's `db/models.py`, unchanged), `mappers.py`, one repository per port.
+  - `SqlUnitOfWork`, `session_scope`/`make_engine`, the Postgres/SQLite `_insert` dialect switch, Alembic and `migrate.py` (revisions 0001-0004 untouched).
+  - `queries/*.py`: the SQL that currently sits in `main.py` and `signals_repo.py`.
+  - `AssessmentCodec` writes and reads `scores.details` in exactly today's JSON shape.
+  - `PgAdvisoryLeaderLock` implements `SingleInstanceGuard`.
+- **`fin_providers`**: provider clients unchanged in behaviour. Credentials still never appear in errors. `normalize_facts` stays here as the anti-corruption translation into domain `Fact`s.
+- **`fin_telegram`**: `TelegramClient`, `TelegramChannel`, `TelegramBot`. The bot parses commands and calls use cases, and its update cursor goes through `BotCursorStore`. Token masking is unchanged.
+- **`fin_langgraph`**: builds the `StateGraph` (START → philosophy nodes in parallel → guardrails → aggregate → END) from domain scorers and implements `ScoringEngine`. This is the only package that imports `langgraph`.
+- **`fin_config`**: one `ConfigLocator` (explicit `FIN_CONFIG_DIR`, else walk parents, so the Docker `config/` layout keeps working), YAML loaders producing typed domain config VOs, `FeatureFlags` (`FEATURE_<NAME>` overrides unchanged).
+- **`fin_bootstrap`**: `Settings` is the **only** place that reads `os.environ`. `Container` builds engine, UoW factory, adapters and use cases, with `dispose()`. Telegram stays fully absent unless `FEATURE_TELEGRAM_ENABLED` (no client, no token, zero calls), and invalid channel config still fails at startup (`ChannelConfigError`).
+- **Apps**
+  - `fin_api`: routers per context, Pydantic response schemas (presentation only), `require_write_token`, 422 handler, 503 mapping, a per-request `Container` dependency. No `sqlalchemy` import and no `fin_persistence` import.
+  - `fin_worker`: `LeaderLock` loop, retry loop and bot loop become use-case calls. Exit codes (2 invalid channel config, 3 lost lock) are preserved.
+  - `fin_flows`: unchanged behaviour. Flows call use cases via the container.
+
+## 4. How the core is protected (enforced, not conventional)
+
+1. **Build-level**: `fin_domain` declares no dependencies, and `fin_application` declares only `fin-domain`. `uv sync --package fin-application` yields an environment with no SQLAlchemy, httpx or pandas.
+2. **Isolation test** (`packages/domain/tests/test_core_isolation.py`): asserts the declared dependencies above, scans every source file of both core packages for forbidden imports, and self-tests the checker.
+3. **import-linter contracts** in the root `pyproject.toml` (added as a dev dependency):
+   - `layers`: `fin_api | fin_worker | fin_flows` → `fin_bootstrap` → adapters → `fin_application` → `fin_domain`.
+   - `forbidden`: `fin_domain` and `fin_application` may not import `sqlalchemy`, `httpx`, `pandas`, `yfinance`, `yaml`, `langgraph`, `fastapi`, `prefect`, `alembic`, nor stdlib `os`, `sqlite3`, `socket`, `urllib`, `pathlib` (domain only).
+   - `independence`: the adapters are mutually independent.
+   - `forbidden`: apps may not import `fin_persistence`, `fin_providers`, `fin_telegram`, `fin_langgraph` or `fin_config` directly.
+   - `layers` inside the domain: `sandbox → signals → scoring → market_data → shared`.
+4. **Ruff**: `flake8-tidy-imports` banned-api for fast editor feedback, and `DTZ` rules in the core packages to catch naive or implicit `now()`.
+5. **Ratchet**: step 0 adds the contracts with `ignore_imports` listing every existing violation; each step deletes the entries it fixes, and step 6 ends with none.
+6. **Ports are tested by contract**: one shared contract suite per repository/channel/provider runs against the in-memory fake and the real adapter.
+
+## 5. Test strategy
+
+- **Domain tests**: pure, no DB, no fixtures. The existing scorer, guardrail, `decide`, policy and sandbox-rule tests move here and run in milliseconds.
+- **Application tests**: use cases run against `fin_testkit` in-memory fakes of the ports (a `FakeUnitOfWork`, `FakeClock`, `FakeChannel`, `FakeProvider`). The scenarios in `test_signals.py`, `test_alert_delivery.py`, `test_scoring_run.py`, `test_ingest.py`, `test_sandbox.py` move here, so most of the 25 core test files stop needing migrated SQLite.
+- **Adapter tests**: repository contract tests on SQLite, and on Postgres under `TEST_DATABASE_URL`. The `migrations match tables` test stays. Provider tests use `httpx.MockTransport`. The `-m live` contract tests stay.
+- **API/worker/flows tests**: `TestClient` with a Container built on SQLite, unchanged behaviour assertions.
+- **Characterization first**: before moving a context, add golden tests for the behaviours listed in `CLAUDE.md` that no test pins yet (see risks).
+
+## 6. Strangler rollout
+
+Each step ends with `uv run pytest -q`, `ruff check`, `ruff format --check`, the import-linter ratchet shrunk, and (for steps touching storage) the suite on Postgres. One Conventional Commit per step.
+
+| Step | Scope | Exit criteria |
+| --- | --- | --- |
+| **0. Scaffolding** (done) | Create empty packages and workspace wiring (root `pyproject`, `[tool.uv.sources]`, `testpaths`, isort `known-first-party`, Dockerfile COPY lines, regenerate `uv.lock`). Add import-linter with the ratchet baseline, ruff rules, the dependency-metadata test. | Suite green; Docker build still passes `scripts/smoke-images.sh`. |
+| **1. Foundation** (done) | Shared kernel (`Ticker`, errors, events, `JobRun`), `Clock`, `UnitOfWork` skeleton, `fin_config` (one `ConfigLocator`), `Settings`/`Container`, `fin_persistence` skeleton with `session_scope`/migrations moved. `fin_core.db.*` re-exports from the new location. | Migrations test green on both DBs. |
+| **2. Market Data** | Domain: `Security`, `Fact`, `PriceBar`, `PointInTimeFacts`, `FiscalYearSeries`, candle aggregation, `CONCEPT_TAGS`. Application: ingestion use cases + `JobRun` tracking + provider ports. Adapters: `fin_providers`, persistence repos/queries. | `ingest.py`, `metrics/annual.py`, `db/repo.py`, `universe.py` deleted from `fin_core`; ingestion flows call use cases. |
+| **3. Scoring** | Domain scorers/guardrails/aggregator/`MetricsCalculator`/`Assessment` to `fin_domain.scoring`; `fin_langgraph` adapter; `ScoreSecurityLive` use case. `decide` is not moved yet (still called by the legacy engine). | `graph/`, `metrics/`, `scoring.py`, `models.py` removed; `/api/score` and `/api/securities/{t}/score` unchanged. |
+| **4. Signals & Alerts** | `SignalDecider`, `ScoreEntry` rules, `Signal`/`Alert`/`Delivery`/`Watchlist`/`ChannelState`, `AlertPolicy`, `AlertComposer`; use cases `RunScoring`, `ProcessSignals`, `DeliverDueAlerts`; `fin_telegram`; `AssessmentCodec`; `SingleInstanceGuard`. Delivery claim becomes optimistic version check. | `signals/`, `alerts/`, `db/signals_repo.py`, `scoring_run.py` removed; alert feed/opportunities/watchlist/channels endpoints served by query ports. |
+| **5. Sandbox** | Port `Portfolio`/`Order`/`FillModel`/`HoldingsLedger`/`StrategySizing` into `fin_domain.sandbox`; `PlaceOrder`/`CancelOrder`/`RunSandbox`; `PortfolioRepository.load_exclusive`; `PortfolioViewQuery`. | `sandbox/` removed from `fin_core`; `/api/portfolios*` unchanged. |
+| **6. Apps and cleanup** | Slim `fin_api` to routers + schemas; move the worker to `apps/worker` (`fin_worker`), update both compose files and `test_compose.py` (every `python -m <module>` must name a real module); flows via the container; `seed_demo.py` via the container. Delete `fin_core`. Zero ratchet entries. | `fin_api` has no `sqlalchemy` import; docs rewritten (below). |
+
+Why bottom-up (Market Data first): each context depends only on contexts already migrated, so no
+step needs a temporary shim in the new layers. Shims exist only on the legacy side.
+
+## 7. Behaviours that must survive (acceptance)
+
+These come from `CLAUDE.md` and are the regression list. Each gets a characterization test before its step if one does not exist.
+
+- Point-in-time reads: restatements are invisible until filed; price re-backfill when stored bars were restated.
+- Scoring: abstention semantics (`evaluated=False`, all-abstained gives `None` conviction and no signal), guardrail cap and the profitable-buyback exception, `skip_sectors`, `signal_blockers` withhold signals while the score is still reported.
+- Signals: baseline is the last actionable score; blocked and `None` runs never become baseline (so `emerging`, not `buy`); hysteresis 65/55; idempotent re-runs.
+- Alerts: sells only for watchlist; 24h per-kind cooldown overridden by a ≥ 10 point move; deliveries created in the alert's transaction; a channel enabled later never replays history; claim-before-send so concurrent senders cannot double-send; backoff and pending-timeout recovery; interrupted-run sweep via `processed_at`.
+- Telegram: absent when the flag is off; at-most-once update offset; token never in logs or errors.
+- Sandbox: next-bar fill, adjusted price, sells before buys, fill-time cash/holdings checks, average-cost holdings restated by `fill price / current bar close`, strategy signals acted on once (`last_signal_id`), exclusive per-portfolio lock.
+- API: bearer-token default-deny writes, 422 without echoing input, 503 without a database, response shapes unchanged.
+- Worker: exit 2 on invalid channel config, exit 3 when another instance holds the lock.
+
+## 8. Risks and mitigations
+
+| Risk | Mitigation |
+| --- | --- |
+| `decide` moving out of the graph changes graph state and tests. | Behaviour is a pure function; move `test_graph.py::decide` cases verbatim and assert the same signals before/after on the `seed_demo` data. |
+| Aggregate loading cost (`Portfolio` with all orders; `ScoreHistory`). | Load only what the rule needs: `ScoreRepository` exposes `last_actionable` and `convictions_since_last_signal`, not full history. Portfolio loading is no worse than today's `holdings()`, which already reads all fills. A holdings snapshot is a later optimisation, not in scope. |
+| Behaviour drift from mapper rewrites. | Keep the stored shapes (tables, `details` JSON) byte-compatible. Add an `AssessmentCodec` round-trip test against fixtures built from the current `_details`. |
+| Naive vs aware datetimes (SQLite returns naive). | Normalise only in the mappers; domain accepts aware UTC only and rejects naive values (test). |
+| Package-split breakage in images. | Step 0 updates the Dockerfile COPY lines and runs `scripts/smoke-images.sh`; `uv sync --no-editable` stays; each new package is wheel-buildable (hatchling). `fastapi<0.137` and the Prefect/compose version pin test stay untouched. |
+| `fin-api` currently relies on transitive `sqlalchemy`/`pydantic`. | After step 6 it imports neither; pydantic is declared explicitly (via FastAPI). |
+| Config lookup changes break images. | `ConfigLocator` keeps the walk-up fallback and adds `FIN_CONFIG_DIR`; test both. |
+| Big diff fatigue. | Seven independent commits, each reviewable, each green. The ratchet makes progress measurable. |
+| Test churn (≈40 test files move). | Tests move with their code in the same commit. No test is deleted without an equivalent. |
+
+## 9. Documentation deliverables
+
+- `docs/specs/009-hexagonal-redesign.md` (this spec) and the index row in `docs/specs/README.md`.
+- Rewrite `docs/architecture/02-repository-map.md` (new package graph) and add `10-hexagonal-architecture.md` (ports/adapters diagram, dependency rule, bounded-context map). Update `01`, `04`, `05`, `06`, `07` diagrams where a component moved.
+- `CLAUDE.md`: new "Architecture" section (package roles, the dependency rule, where to add a philosophy / provider / channel / use case), updated command paths, and the import-linter command.
+
+## 10. Verification
+
+End to end, per step and at the end:
+
+1. `uv sync --all-packages --frozen && uv run pytest -q` (all suites), and `uv run ruff check . && uv run ruff format --check .`.
+2. `uv run lint-imports` (import-linter): passes, and the ignore list is empty after step 6.
+3. `TEST_DATABASE_URL=postgresql+psycopg://user@localhost:5432/fin_test uv run pytest` after every step that touches `fin_persistence`.
+4. `uv run pytest packages/domain packages/application` runs with only the two core packages installed (`uv sync --package fin-application`), proving the core has no hidden infrastructure imports.
+5. Smoke the real app: `uv run python scripts/seed_demo.py sqlite:///demo.db`, then `DATABASE_URL=sqlite:///demo.db API_TOKEN=dev-token uv run uvicorn fin_api.main:app` and `cd apps/web && pnpm dev`; compare the Opportunities, Security detail, Alerts and Sandbox pages with screenshots taken before step 0.
+6. `scripts/smoke-images.sh` and `docker compose -f deploy/docker-compose.yml config -q` (needs Docker).
+7. A before/after equivalence check: run `seed_demo` on the commit before step 0 and on the final commit, then diff the `scores`, `signals`, `alerts`, `sandbox_orders` and `portfolio_snapshots` tables (expected: identical apart from timestamps and ids).
+8. A negative test of the protection itself: temporarily add `import sqlalchemy` to `fin_domain` and confirm both `lint-imports` and the dependency-metadata test fail.
+
+## 11. Critical existing files (sources of the moves)
+
+- Rules to extract: `graph/build.py` (`aggregate_node`, `decide_node`, rearm constants), `graph/nodes/*.py`, `graph/guardrails.py`, `graph/data.py`, `metrics/annual.py`, `metrics/compute.py`, `alerts/policy.py`, `sandbox/engine.py`, `sandbox/config.py`, `ingest.py` (`tracked_run`, `run_status`), `db/signals_repo.py` (`armed_state`, `latest_actionable_score`), `db/repo.py` (`facts_as_of`), `apps/api/src/fin_api/main.py` (`_aggregate`, `_view`, score-history windowing, search).
+- Already ports, to reuse as-is: `alerts/base.py::AlertChannel`, `providers/base.py` Protocols.
+- Reuse unchanged: the Alembic migrations, `db/models.py` as `tables.py`, `LeaderLock`, `TelegramClient`, the provider clients, `flows/tests/test_versions.py`.
+
+## 12. Progress
+
+**Step 0 (scaffolding) is done.**
+- Workspace: nine new packages (`fin_domain` with its five context sub-packages, `fin_application`, `fin_persistence`, `fin_providers`, `fin_telegram`, `fin_langgraph`, `fin_config`, `fin_bootstrap`, `fin_worker`), all empty. `uv.lock` regenerated; the Dockerfile copies `apps/worker`.
+- Boundaries: 8 import-linter contracts (`uv run lint-imports`). Two are ratchets that list the current violations: 30 edges from `fin_api`/`fin_flows` into `fin_core`, and 2 direct `sqlalchemy` imports in `fin_api`. Ruff bans infrastructure imports (TID251) and naive datetimes (DTZ) in the core packages only.
+- Checked: the contracts and ruff rules reject planted violations; the domain tests pass in an environment containing only `fin-domain`; the lock installs with the Dockerfile's uv 0.5 line for `fin-api`, `fin-flows` and `fin-worker`.
+- Images: `fin-api`, `fin-flows` and `fin-worker` build from `deploy/python.Dockerfile` and import cleanly (non-root uid 10001; the `fin-worker` image contains all new packages). `docker compose config -q` passes. `uv.lock` `revision` went from 3 to 5 because of the local uv 0.13.6; the Dockerfile's uv 0.5 line installs it fine.
+- Known, unrelated to this step: `scripts/smoke-images.sh` stops at the web image, where `pnpm install --frozen-lockfile` fails with `ERR_PNPM_IGNORED_BUILDS` (pnpm's build-script approval policy). `apps/web` and `deploy/web.Dockerfile` are untouched; this needs its own fix.
+- Ratchet at this point: 32 ignored imports, to reach 0 at step 6.
+
+**Step 1 (foundation) is done.**
+- Domain `shared` kernel: `Ticker`, `DomainError`/`InvariantViolation`/`NotFound`, `DomainEvent`, `ensure_utc`, and the `JobRun` aggregate with `RunStatus`, `derive_status`, `summarise_failures` (the rules that were in `ingest.py`).
+- Application: `Clock`, `JobRunRepository`, `UnitOfWork` ports, `ApplicationError`/`InvalidCommand`/`ConcurrencyConflict`, and the `JobRunTracker` use case (the bookkeeping behind `tracked_run`).
+- `fin_persistence`: `tables.py`, `migrations/` and `migrate.py` moved here with `git mv` (history kept), `session.py`, `SqlJobRunRepository`, `SqlUnitOfWork`. Alembic revisions 0001-0004 are unchanged.
+- `fin_config`: one `ConfigLocator` (explicit dir, `FIN_CONFIG_DIR`, then nearest `config/`) replaces the five walk-up loops; `FeatureFlags` moved here.
+- `fin_bootstrap`: `Settings` (environment read in one place) and `Container` (engine, unit-of-work factory, `JobRunTracker`, `dispose`).
+- `fin_testkit`: `FakeClock`, `InMemoryJobRunRepository`, `InMemoryUnitOfWork`. The same repository/unit-of-work contract suite runs against the fake, SQLite and Postgres.
+- Legacy shims keep every old import path working: `fin_core.db.models`, `fin_core.db.session` (still reads the environment; `test_settings_parity.py` pins it to `Settings`), `fin_core.db.migrate` (the compose command), `fin_core.features`.
+- Deviations from the plan above: `Settings` is a frozen dataclass, not pydantic-settings (no dependency needed); `AsOf` is deferred to step 2, where the point-in-time semantics it must carry are ported; `JobRunTracker` exists beside the legacy `tracked_run`, which is replaced when the ingestion jobs move in step 2.
+- Checked: ruff, 9 import-linter contracts, 548 tests on SQLite and 702 on real Postgres 16. In the rebuilt images, `python -m fin_core.db.migrate upgrade` (the compose command) migrates an empty Postgres to 0004, the migration files are present in the non-editable wheel, `ConfigLocator` finds `/app/config`, and a job run recorded through `Container` lands in Postgres.
+- Found on the way: `from conftest import bar` in a core test breaks as soon as a second `conftest.py` exists in the repo (pytest registers them all as the module `conftest`). The persistence fixtures live in `db_fixtures.py` for that reason; the core test is left as is until it moves.
+- Ratchet: still 32 ignored imports (apps still import `fin_core`; its modules now sit on top of the new packages).

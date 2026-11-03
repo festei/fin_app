@@ -12,6 +12,7 @@ from typing import Any
 import yaml
 from langgraph.graph import END, START, StateGraph
 
+from fin_config import ConfigLocator
 from fin_core.graph.guardrails import guardrails_node
 from fin_core.graph.nodes import PHILOSOPHY_NODES
 from fin_core.graph.state import GraphState
@@ -27,13 +28,7 @@ SELL_REARM_ABOVE = 55.0
 
 
 def load_config(path: Path | None = None) -> dict[str, Any]:
-    if path is None:
-        for parent in Path(__file__).resolve().parents:
-            if (parent / "config" / "philosophies.yml").exists():
-                path = parent / "config" / "philosophies.yml"
-                break
-    if path is None:
-        raise FileNotFoundError("config/philosophies.yml not found")
+    path = path or ConfigLocator().path("philosophies.yml")
     return yaml.safe_load(path.read_text())
 
 

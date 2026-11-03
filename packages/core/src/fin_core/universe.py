@@ -8,6 +8,7 @@ from typing import Any
 import yaml
 from sqlalchemy.orm import Session
 
+from fin_config import ConfigLocator
 from fin_core.db import repo
 
 _ALLOWED = {"ticker", "name", "sector", "kind", "cik", "active"}
@@ -15,11 +16,7 @@ _KINDS = {"stock", "etf"}
 
 
 def _default_path() -> Path:
-    for parent in Path(__file__).resolve().parents:
-        candidate = parent / "config" / "universe.yml"
-        if candidate.exists():
-            return candidate
-    raise FileNotFoundError("config/universe.yml not found")
+    return ConfigLocator().path("universe.yml")
 
 
 def load_universe(path: Path | None = None) -> list[dict[str, Any]]:

@@ -1,30 +1,27 @@
-"""Programmatic Alembic runner. Migrations live inside the package so non-editable
-images ship them.  CLI:  python -m fin_core.db.migrate [upgrade|downgrade|current] [rev]"""
+"""Command line for the migrations (``python -m fin_core.db.migrate [upgrade|downgrade|current]
+[rev]``). The runner itself is ``fin_persistence.migrate``; this adds the ``DATABASE_URL`` default
+until the composition root takes it over."""
 
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
-from alembic import command
 from alembic.config import Config
 
 from fin_core.db.session import database_url
+from fin_persistence import migrate as _migrate
 
 
 def alembic_config(url: str | None = None) -> Config:
-    cfg = Config()
-    cfg.set_main_option("script_location", str(Path(__file__).parent / "migrations"))
-    cfg.set_main_option("sqlalchemy.url", (url or database_url()).replace("%", "%%"))
-    return cfg
+    return _migrate.alembic_config(url or database_url())
 
 
 def upgrade(url: str | None = None, revision: str = "head") -> None:
-    command.upgrade(alembic_config(url), revision)
+    _migrate.upgrade(url or database_url(), revision)
 
 
 def downgrade(url: str | None = None, revision: str = "base") -> None:
-    command.downgrade(alembic_config(url), revision)
+    _migrate.downgrade(url or database_url(), revision)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -36,7 +33,7 @@ def main(argv: list[str] | None = None) -> None:
     elif action == "downgrade":
         downgrade(revision=rev or "-1")
     elif action == "current":
-        command.current(alembic_config())
+        _migrate.current(database_url())
     else:
         raise SystemExit(f"unknown action {action!r}")
 

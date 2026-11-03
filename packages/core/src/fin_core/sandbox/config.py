@@ -8,13 +8,11 @@ from typing import Any
 
 import yaml
 
+from fin_config import ConfigLocator
+
 
 def _default_path() -> Path:
-    for parent in Path(__file__).resolve().parents:
-        candidate = parent / "config" / "sandbox.yml"
-        if candidate.exists():
-            return candidate
-    raise FileNotFoundError("config/sandbox.yml not found")
+    return ConfigLocator().path("sandbox.yml")
 
 
 BUYABLE_KINDS = ("buy", "emerging")  # signal kinds that may open a position

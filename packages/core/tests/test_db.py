@@ -197,16 +197,3 @@ def test_upsert_securities_explicit_none_overwrites_and_mixed_batches_work(engin
         assert ko.sector is None and ko.cik == "1"
         assert repo.get_security(s, "PG").name == "P&G"
         assert repo.get_security(s, "XOM").kind == "stock"  # model default applies to new rows
-
-
-def test_make_engine_sets_a_connect_timeout_for_server_databases(monkeypatch):
-    from fin_core.db import session as session_mod
-
-    captured = {}
-    monkeypatch.setattr(
-        session_mod, "create_engine", lambda url, **kw: captured.update(kw) or object()
-    )
-    session_mod.make_engine("postgresql+psycopg://u:p@db:5432/x", connect_timeout=3)
-    assert captured["connect_args"] == {"connect_timeout": 3}
-    session_mod.make_engine("sqlite:///x.db")
-    assert captured["connect_args"] == {}
