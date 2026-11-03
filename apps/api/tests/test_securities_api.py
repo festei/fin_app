@@ -8,8 +8,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from fin_api.main import app, dispose_engines
-from fin_core.db import migrate, repo, signals_repo
+from fin_core.db import migrate, repo
 from fin_core.db.session import make_engine, session_scope
+from fin_persistence import seed
 
 client = TestClient(app)
 
@@ -39,7 +40,7 @@ def db(monkeypatch, tmp_path):
                 {"ticker": "OLD", "name": "Retired Co", "active": False},
             ],
         )
-        signals_repo.watchlist_add(s, repo.get_security(s, "MSFT").id)
+        seed.watchlist_add(s, repo.get_security(s, "MSFT").id)
     yield engine
     engine.dispose()
 
@@ -152,12 +153,12 @@ def test_score_history_includes_flagged_gaps_and_signals(db):
         for i, (conv, blocked, abstained) in enumerate(
             [(60.0, False, False), (75.0, False, False), (None, False, True), (90.0, True, False)]
         ):
-            score = signals_repo.insert_score(
+            score = seed.insert_score(
                 s, security_id=sid, as_of=now - timedelta(days=3 - i), conviction=conv,
                 all_abstained=abstained, signal_blocked=blocked, explanation="", details={},
             )  # fmt: skip
             rows.append(score)
-        signals_repo.insert_signal(
+        seed.insert_signal(
             s, security_id=sid, score_id=rows[1].id, kind="emerging", conviction=75.0,
             as_of=now - timedelta(days=2), reason="",
         )  # fmt: skip
@@ -176,11 +177,11 @@ def test_signals_outside_the_returned_score_window_are_dropped(db):
         sid = repo.get_security(s, "AAPL").id
         ids = []
         for i in range(4):  # oldest first: as_of = 4, 3, 2, 1 days ago
-            score = signals_repo.insert_score(
+            score = seed.insert_score(
                 s, security_id=sid, as_of=now - timedelta(days=4 - i), conviction=50.0 + i,
                 all_abstained=False, signal_blocked=False, explanation="", details={},
             )  # fmt: skip
-            signals_repo.insert_signal(
+            seed.insert_signal(
                 s, security_id=sid, score_id=score.id, kind="buy", conviction=50.0 + i,
                 as_of=now - timedelta(days=4 - i), reason="",
             )  # fmt: skip

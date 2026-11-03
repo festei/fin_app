@@ -16,11 +16,11 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
+from graph_compat import score_security
 
 from fin_config import load_scoring_config as load_config
 from fin_core.db import repo
 from fin_core.db.session import session_scope
-from fin_core.scoring import score_security
 from fin_domain.market_data import CONCEPT_TAGS
 from fin_domain.scoring import AnnualPoint, ScoreResult, SecurityMetrics
 from fin_domain.scoring.philosophies.greenblatt import score_greenblatt

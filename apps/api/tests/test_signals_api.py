@@ -8,9 +8,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from fin_api.main import app, dispose_engines
-from fin_core.db import migrate, repo, signals_repo
+from fin_core.db import migrate, repo
 from fin_core.db.models import AlertDelivery
 from fin_core.db.session import make_engine, session_scope
+from fin_persistence import seed
 
 TOKEN = "test-token"
 client = TestClient(app, headers={"Authorization": f"Bearer {TOKEN}"})
@@ -61,7 +62,7 @@ def add_score(engine, ticker, conviction, *, blocked=False, price=10.0):
             },
             "metrics": {"price": price, "price_date": "2025-03-03"},
         }
-        score = signals_repo.insert_score(
+        score = seed.insert_score(
             s, security_id=sid, as_of=NOW, conviction=conviction, all_abstained=False,
             signal_blocked=blocked, explanation="x", details=details,
         )  # fmt: skip
@@ -71,10 +72,10 @@ def add_score(engine, ticker, conviction, *, blocked=False, price=10.0):
 def add_alert(engine, ticker, kind, minutes, *, channels=("in_app",)):
     sid, score_id = add_score(engine, ticker, 80.0)
     with session_scope(engine) as s:
-        signal = signals_repo.insert_signal(
+        signal = seed.insert_signal(
             s, security_id=sid, score_id=score_id, kind=kind, conviction=80.0, as_of=NOW, reason=""
         )
-        alert = signals_repo.insert_alert(
+        alert = seed.insert_alert(
             s,
             security_id=sid,
             signal_id=signal.id,
@@ -184,7 +185,7 @@ def test_channels_follow_the_feature_flag_and_show_mutes(db, monkeypatch):
     ]
     monkeypatch.setenv("FEATURE_TELEGRAM_ENABLED", "true")
     with session_scope(db) as s:
-        signals_repo.set_muted_until(s, "telegram", NOW)
+        seed.set_muted_until(s, "telegram", NOW)
     telegram = client.get("/api/channels").json()[1]
     assert telegram["enabled"] is True and telegram["muted_until"].startswith("2025-03-10T12:00")
 
@@ -263,7 +264,7 @@ def test_opportunities_drop_scores_older_than_max_age_days(db):
     add_score(db, "AAA", 80.0)  # computed_at is the real now
     with session_scope(db) as s:
         sid = repo.get_security(s, "BBB").id
-        old = signals_repo.insert_score(
+        old = seed.insert_score(
             s, security_id=sid, as_of=NOW, conviction=90.0, all_abstained=False,
             signal_blocked=False, explanation="x", details={},
         )  # fmt: skip

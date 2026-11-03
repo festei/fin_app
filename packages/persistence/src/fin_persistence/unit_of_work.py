@@ -15,6 +15,16 @@ from fin_persistence.market_data import (
     SqlSecurityRepository,
     SqlYieldRepository,
 )
+from fin_persistence.signals import (
+    SqlAlertFeedQuery,
+    SqlAlertRepository,
+    SqlBotCursorStore,
+    SqlChannelStateRepository,
+    SqlOpportunityQuery,
+    SqlScoreRepository,
+    SqlSignalRepository,
+    SqlWatchlistRepository,
+)
 
 
 class SqlUnitOfWork:
@@ -25,6 +35,14 @@ class SqlUnitOfWork:
     prices: SqlPriceRepository
     facts: SqlFactRepository
     yields: SqlYieldRepository
+    scores: SqlScoreRepository
+    signals: SqlSignalRepository
+    alerts: SqlAlertRepository
+    watchlist: SqlWatchlistRepository
+    channels: SqlChannelStateRepository
+    cursors: SqlBotCursorStore
+    opportunities: SqlOpportunityQuery
+    alert_feed: SqlAlertFeedQuery
 
     def __init__(self, engine: Engine):
         self._sessions = sessionmaker(engine, expire_on_commit=False)
@@ -43,6 +61,14 @@ class SqlUnitOfWork:
         self.prices = SqlPriceRepository(self._session)
         self.facts = SqlFactRepository(self._session)
         self.yields = SqlYieldRepository(self._session)
+        self.scores = SqlScoreRepository(self._session)
+        self.signals = SqlSignalRepository(self._session)
+        self.alerts = SqlAlertRepository(self._session)
+        self.watchlist = SqlWatchlistRepository(self._session)
+        self.channels = SqlChannelStateRepository(self._session)
+        self.cursors = SqlBotCursorStore(self._session)
+        self.opportunities = SqlOpportunityQuery(self._session)
+        self.alert_feed = SqlAlertFeedQuery(self._session)
         return self
 
     def __exit__(

@@ -20,13 +20,12 @@ import sys
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
-from fin_core.alerts.channels import InAppChannel
-from fin_core.db import migrate, repo, signals_repo
+from fin_bootstrap import Container, Settings
+from fin_core.db import migrate, repo
 from fin_core.db.session import make_engine, session_scope
 from fin_core.sandbox import engine as sandbox
 from fin_core.sandbox.config import SandboxConfig
 from fin_core.sandbox.run import run_sandbox
-from fin_core.scoring_run import run_scoring
 from fin_domain.market_data import CONCEPT_TAGS
 
 EPS = [1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 2.0, 2.2, 2.5, 2.7]  # oldest first
@@ -152,9 +151,10 @@ def seed(url: str, force: bool = False) -> None:
             sec_id = repo.get_security(s, ticker).id
             repo.upsert_facts(s, sec_id, facts_for(k))
             repo.upsert_prices(s, sec_id, bars(price_path(anchors, k, rng, days=400)))
-        # follow two stocks, so sell alerts exist for them
-        for t in ("ACME", "BOLT"):
-            signals_repo.watchlist_add(s, repo.get_security(s, t).id)
+
+    container = Container(Settings(database_url=url))
+    for t in ("ACME", "BOLT"):  # follow two stocks, so sell alerts exist for them
+        container.watchlist.add(t)
 
     defaults = SandboxConfig.load()
     with session_scope(engine) as s:
@@ -166,7 +166,6 @@ def seed(url: str, force: bool = False) -> None:
             s, "Manual picks", mode="manual", cash=1000, defaults=defaults
         ).id
 
-    channels = [InAppChannel()]
     for week in range(WEEKS):
         friday = START + timedelta(weeks=week)
         stamp = datetime(friday.year, friday.month, friday.day, 23, tzinfo=UTC)
@@ -177,8 +176,9 @@ def seed(url: str, force: bool = False) -> None:
         if week == 20:
             with session_scope(engine) as s:
                 sandbox.place_order(s, manual, "DELT", "sell", now=stamp)
-        run_scoring(engine, channels=channels, as_of=friday)
+        container.run_scoring.execute(as_of=friday)
         run_sandbox(engine, as_of=stamp)
+    container.dispose()
     print(f"seeded {url}: {len(COMPANIES)} synthetic companies, {WEEKS} weeks of history")
     print(f"portfolios: strategy={strategy} manual={manual}")
 

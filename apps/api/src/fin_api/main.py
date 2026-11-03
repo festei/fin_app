@@ -20,10 +20,9 @@ from sqlalchemy.orm import Session
 
 from fin_application.scoring import Baseline
 from fin_application.scoring import score as score_metrics
-from fin_bootstrap import Container
+from fin_bootstrap import Container, Settings
 from fin_core import __version__
-from fin_core.alerts.pipeline import feed_item
-from fin_core.db import repo, signals_repo
+from fin_core.db import repo
 from fin_core.db.models import (
     Portfolio,
     PortfolioSnapshot,
@@ -36,11 +35,10 @@ from fin_core.db.models import (
 from fin_core.db.session import database_configured, database_url, make_engine, session_scope
 from fin_core.features import FeatureFlags
 from fin_core.sandbox import engine as sandbox
-from fin_core.scoring import score_security
 from fin_domain.market_data import aggregate_candles
 from fin_domain.scoring import ScoreResult, SecurityMetrics
 from fin_domain.shared import NotFound
-from fin_domain.signals import BUY_REARM_BELOW, SELL_REARM_ABOVE, Signal
+from fin_domain.signals import Signal
 
 log = logging.getLogger("fin_api")
 
@@ -140,11 +138,28 @@ def _engine(url: str) -> Engine:
     return _engines[url]
 
 
+_containers: dict[str, Container] = {}
+
+
+def _container_for(url: str) -> Container:
+    """The use cases for one database URL. They share the scoring engine and thresholds."""
+    if url not in _containers:
+        _containers[url] = Container(
+            Settings(database_url=url, db_connect_timeout=3),  # a probe must not hang
+            scoring_engine=_scoring_engine(),
+            scoring_config=_container().scoring_config,
+        )
+    return _containers[url]
+
+
 def dispose_engines() -> None:
     """Close every pooled connection and forget the engines (shutdown, and between tests)."""
     for engine in _engines.values():
         engine.dispose()
     _engines.clear()
+    for container in _containers.values():
+        container.dispose()
+    _containers.clear()
 
 
 @app.get("/readyz")
@@ -213,42 +228,28 @@ def score_ticker(
     if as_of is not None and as_of > today:
         raise HTTPException(422, detail=f"as_of {as_of} is in the future (today is {today} UTC)")
     try:
-        with session_scope(_engine(database_url())) as session:
-            buy_armed = sell_armed = True
-            if previous_conviction is None and as_of is None:
-                sec = repo.get_security(session, ticker)
-                if sec is not None:
-                    baseline = signals_repo.latest_actionable_score(session, sec.id)
-                    previous_conviction = baseline.conviction if baseline else None
-                    buy_armed, sell_armed = signals_repo.armed_state(
-                        session,
-                        sec.id,
-                        buy_rearm_below=BUY_REARM_BELOW,
-                        sell_rearm_above=SELL_REARM_ABOVE,
-                    )
-            out = score_security(
-                session,
+        with _app() as app_:
+            live = app_.score_security_live.execute(
                 ticker,
                 as_of or today,
-                previous_conviction=previous_conviction,
-                buy_armed=buy_armed,
-                sell_armed=sell_armed,
-                scoring_engine=_scoring_engine(),
-                config=_config(),
+                Baseline(previous_conviction=previous_conviction)
+                if previous_conviction is not None
+                else None,
+                use_stored_baseline=previous_conviction is None and as_of is None,
             )
     except NotFound:
         raise HTTPException(404, detail=f"unknown ticker {ticker.upper()}") from None
-    except SQLAlchemyError as exc:
-        # Same answer as /readyz for an unavailable database; only the type, no connection details.
-        raise HTTPException(503, detail=f"database unavailable ({type(exc).__name__})") from None
+    except HTTPException:
+        raise
+    a = live.assessment
     return TickerScoreResponse(
-        conviction=out["conviction"],
-        all_abstained=out.get("all_abstained", False),
-        explanation=out["explanation"],
-        philosophy_results=out["philosophy_results"],
-        guardrail_results=out.get("guardrail_results", {}),
-        signal=out.get("signal"),
-        metrics=out["metrics"],
+        conviction=a.conviction,
+        all_abstained=a.all_abstained,
+        explanation=live.explanation,
+        philosophy_results=a.philosophy_results,
+        guardrail_results=a.guardrail_results,
+        signal=live.signal,
+        metrics=live.metrics,
     )
 
 
@@ -263,6 +264,18 @@ def _db() -> Iterator[Session]:
     try:
         with session_scope(_engine(database_url())) as session:
             yield session
+    except SQLAlchemyError as exc:
+        raise HTTPException(503, detail=f"database unavailable ({type(exc).__name__})") from None
+
+
+@contextmanager
+def _app() -> Iterator[Container]:
+    """The use cases for the configured database, or 503 (not configured / unreachable) like the
+    other endpoints."""
+    if not database_configured():
+        raise HTTPException(503, detail="database not configured")
+    try:
+        yield _container_for(database_url())
     except SQLAlchemyError as exc:
         raise HTTPException(503, detail=f"database unavailable ({type(exc).__name__})") from None
 
@@ -290,18 +303,23 @@ def list_alerts(
     limit: int = Query(50, ge=1, le=200), before_id: int | None = None, unread_only: bool = False
 ) -> AlertsPage:
     """The in-app alert feed, newest first. Always populated, whatever other channels are on."""
-    with _db() as s:
-        rows = signals_repo.list_alerts(
-            s, limit=limit, before_id=before_id, unread_only=unread_only
+    with _app() as app_:
+        rows = app_.alert_feed.page(limit, before_id, unread_only)
+    items = [
+        AlertOut(
+            id=a.id,
+            ticker=str(a.ticker),
+            kind=a.kind,
+            severity=a.severity,
+            conviction=a.conviction,
+            title=a.title,
+            body=a.visible_body,
+            created_at=a.created_at.isoformat(),
+            read=a.read_at is not None,
+            deliveries={d.channel: d.status.value for d in a.deliveries},
         )
-        ids = {r.security_id for r in rows}
-        tickers = (
-            {x.id: x.ticker for x in s.scalars(select(Security).where(Security.id.in_(ids)))}
-            if ids
-            else {}
-        )
-        deliveries = signals_repo.deliveries_for(s, [r.id for r in rows])
-        items = [feed_item(r, tickers[r.security_id], deliveries) for r in rows]
+        for a in rows
+    ]
     return AlertsPage(
         items=items, next_before_id=rows[-1].id if rows and len(rows) == limit else None
     )
@@ -309,9 +327,11 @@ def list_alerts(
 
 @app.post("/api/alerts/{alert_id}/read", dependencies=[Depends(require_write_token)])
 def mark_read(alert_id: int) -> dict[str, object]:
-    with _db() as s:
-        if not signals_repo.mark_alert_read(s, alert_id, datetime.now(UTC)):
-            raise HTTPException(404, detail=f"unknown alert {alert_id}")
+    with _app() as app_:
+        try:
+            app_.alert_feed.mark_read(alert_id)
+        except NotFound:
+            raise HTTPException(404, detail=f"unknown alert {alert_id}") from None
     return {"id": alert_id, "read": True}
 
 
@@ -335,52 +355,49 @@ def opportunities(
     which spans weekends and holidays), so a view from before a long data outage cannot sit in
     the ranking."""
     newer_than = datetime.now(UTC) - timedelta(days=max_age_days)
-    with _db() as s:
-        out = []
-        for sec, score in signals_repo.opportunities(s, limit=limit, newer_than=newer_than):
-            d = score.details or {}
-            metrics = d.get("metrics", {})
-            out.append(
-                OpportunityOut(
-                    ticker=sec.ticker,
-                    name=sec.name,
-                    sector=sec.sector,
-                    conviction=score.conviction,
-                    computed_at=score.computed_at.isoformat() if score.computed_at else None,
-                    philosophies={
-                        n: p["score"]
-                        for n, p in (d.get("philosophies") or {}).items()
-                        if p.get("evaluated", True)
-                    },
-                    price=metrics.get("price"),
-                    price_date=metrics.get("price_date"),
-                )
-            )
-    return out
+    with _app() as app_:
+        rows = app_.opportunities.top(limit, newer_than)
+    return [
+        OpportunityOut(
+            ticker=str(r.ticker),
+            name=r.name,
+            sector=r.sector,
+            conviction=r.conviction,
+            computed_at=r.computed_at.isoformat() if r.computed_at else None,
+            philosophies={n: p.score for n, p in r.details.evaluated().items()},
+            price=r.details.metrics.price,
+            price_date=(
+                r.details.metrics.price_date.isoformat() if r.details.metrics.price_date else None
+            ),
+        )
+        for r in rows
+    ]
 
 
 @app.get("/api/watchlist")
 def get_watchlist() -> dict[str, list[str]]:
-    with _db() as s:
-        return {"tickers": signals_repo.watchlist_tickers(s)}
+    with _app() as app_:
+        return {"tickers": app_.watchlist.tickers()}
 
 
 @app.put("/api/watchlist/{ticker}", dependencies=[Depends(require_write_token)])
 def watch(ticker: str) -> dict[str, object]:
-    with _db() as s:
-        sec = repo.get_security(s, ticker)
-        if sec is None:
-            raise HTTPException(404, detail=f"unknown ticker {ticker.upper()}")
-        return {"ticker": sec.ticker, "added": signals_repo.watchlist_add(s, sec.id)}
+    with _app() as app_:
+        try:
+            symbol, added = app_.watchlist.add(ticker)
+        except NotFound:
+            raise HTTPException(404, detail=f"unknown ticker {ticker.upper()}") from None
+    return {"ticker": str(symbol), "added": added}
 
 
 @app.delete("/api/watchlist/{ticker}", dependencies=[Depends(require_write_token)])
 def unwatch(ticker: str) -> dict[str, object]:
-    with _db() as s:
-        sec = repo.get_security(s, ticker)
-        if sec is None:
-            raise HTTPException(404, detail=f"unknown ticker {ticker.upper()}")
-        return {"ticker": sec.ticker, "removed": signals_repo.watchlist_remove(s, sec.id)}
+    with _app() as app_:
+        try:
+            symbol, removed = app_.watchlist.remove(ticker)
+        except NotFound:
+            raise HTTPException(404, detail=f"unknown ticker {ticker.upper()}") from None
+    return {"ticker": str(symbol), "removed": removed}
 
 
 @app.get("/api/channels")
@@ -389,8 +406,8 @@ def channels() -> list[dict[str, object]]:
     muted: dict[str, str | None] = {}
     if database_configured():
         try:
-            with _db() as s:
-                until = signals_repo.muted_until(s, "telegram")
+            with _app() as app_:
+                until = app_.channel_service.state("telegram").muted_until
                 muted["telegram"] = until.isoformat() if until else None
         except HTTPException:
             pass  # the flag view still works with the database down
@@ -451,6 +468,11 @@ def _security(s: Session, ticker: str) -> Security:
     return sec
 
 
+def _watched_tickers() -> set[str]:
+    with _app() as app_:
+        return set(app_.watchlist.tickers())
+
+
 def _like_escape(text_: str) -> str:
     """Make user text match literally inside LIKE: escape the escape character, % and _."""
     return text_.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
@@ -481,7 +503,7 @@ def list_securities(
         if kind:
             query = query.where(Security.kind == kind)
         rows = s.scalars(query.order_by(Security.ticker).limit(limit)).all()
-        watched = set(signals_repo.watchlist_tickers(s))
+        watched = _watched_tickers()
         return [
             SecurityOut(
                 ticker=r.ticker,

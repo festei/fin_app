@@ -12,6 +12,9 @@ always on.
   without credentials stops the worker loudly instead of failing at the first alert.
 * Without a database it only logs a heartbeat (bare dev runs).
 * ``SIGTERM`` stops it cleanly (the bot's long poll is short, so shutdown is quick).
+
+Everything it does is a use case from ``fin_bootstrap.Container``; this module only runs them on
+a timer.
 """
 
 from __future__ import annotations
@@ -19,123 +22,55 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
 
-from sqlalchemy import Connection, Engine, text
-
-from fin_core.alerts.base import AlertChannel, ChannelConfigError
-from fin_core.alerts.channels import build_channels
-from fin_core.alerts.pipeline import retry_failed
-from fin_core.alerts.policy import AlertPolicy
-from fin_core.alerts.telegram import TelegramBot, TelegramChannel
-from fin_core.db.session import database_configured, make_engine
-from fin_core.features import FeatureFlags
+from fin_application.errors import ChannelConfigError, InstanceAlreadyRunning
+from fin_application.ports import AlertChannel, SingleInstanceGuard
+from fin_bootstrap import Container, FeatureFlags, Settings
 
 log = logging.getLogger("fin_worker")
 
-LEADER_LOCK_KEY = 7_301_001  # arbitrary, fixed: identifies "the fin-app worker" in pg_locks
 BOT_POLL_TIMEOUT = 10  # seconds of long polling per round; also bounds shutdown latency
 BOT_ERROR_BACKOFF = 5.0
 
-
-class WorkerAlreadyRunningError(RuntimeError):
-    """Another worker instance holds the leader lock."""
+WorkerAlreadyRunningError = InstanceAlreadyRunning  # the name this error has always had here
 
 
 @dataclass
 class WorkerContext:
-    engine: Engine
+    container: Container
     channels: list[AlertChannel]
-    policy: AlertPolicy
-    bot: TelegramBot | None = None
-    lock: LeaderLock | None = field(default=None, repr=False)
+    bot: object | None = None  # the Telegram bot, when the channel is on
+    lock: SingleInstanceGuard | None = field(default=None, repr=False)
     exit_code: int = 0  # non-zero when the worker stopped itself (e.g. lost leadership)
 
+    def deliver(self) -> int:
+        """Send every delivery that is due (new, or failed and past its backoff)."""
+        return self.container.deliver_due_alerts.execute(channels=self.channels)
 
-def build_context(flags: FeatureFlags | None = None, env=None, http_client=None):
+
+def build_context(
+    flags: FeatureFlags | None = None,
+    env: Mapping[str, str] | None = None,
+    http_client=None,
+) -> WorkerContext | None:
     """Wire the worker from configuration, or ``None`` when no database is configured.
-    Raises ``ChannelConfigError`` if a switched-on channel lacks its credentials."""
-    if not database_configured():
+    Raises ``ChannelConfigError`` if a switched-on channel lacks its credentials. ``env``
+    overrides the Telegram credentials only (the database always comes from the process
+    environment)."""
+    settings = Settings.from_environ()
+    if not settings.database_configured:
         return None
-    engine = make_engine()
-    channels = build_channels(flags or FeatureFlags.load(), env, http_client)
-    bot = next(
-        (TelegramBot(c.client, engine) for c in channels if isinstance(c, TelegramChannel)), None
-    )
-    return WorkerContext(engine=engine, channels=channels, policy=AlertPolicy.load(), bot=bot)
-
-
-class LeaderLock:
-    """The single-instance lock: a Postgres session-level advisory lock held on a dedicated
-    connection. Other databases (SQLite in dev/tests) have no cross-process advisory locks, so it
-    is a no-op there.
-
-    The lock lives and dies with that connection: if the database restarts or the connection is
-    dropped, the lock is gone while this process keeps running, and a second instance could start.
-    ``ensure`` therefore re-checks it every loop and re-acquires it, or raises
-    ``WorkerAlreadyRunningError`` if another instance took over meanwhile.
-    """
-
-    def __init__(self, engine: Engine):
-        self.engine = engine
-        self._conn: Connection | None = None
-
-    @property
-    def active(self) -> bool:
-        return self.engine.dialect.name == "postgresql"
-
-    def _take(self) -> Connection:
-        conn = self.engine.connect().execution_options(isolation_level="AUTOCOMMIT")
-        got = conn.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": LEADER_LOCK_KEY}).scalar()
-        if not got:
-            conn.close()
-            raise WorkerAlreadyRunningError("another worker instance holds the leader lock")
-        return conn
-
-    def acquire(self) -> None:
-        if self.active:
-            self._conn = self._take()
-
-    def _discard(self) -> None:
-        conn, self._conn = self._conn, None
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass  # the connection is already dead
-
-    def ensure(self) -> bool:
-        """``True`` if the lock was still held. ``False`` if it had been lost and was re-acquired.
-        Raises ``WorkerAlreadyRunningError`` if it was lost and another instance now holds it."""
-        if not self.active:
-            return True
-        if self._conn is not None:
-            try:
-                held = self._conn.execute(
-                    text(
-                        "SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND classid = 0 "
-                        "AND objid = :k AND pid = pg_backend_pid()"
-                    ),
-                    {"k": LEADER_LOCK_KEY},
-                ).scalar()
-                if held:
-                    return True
-            except Exception:
-                pass  # connection broken: fall through and re-acquire
-        self._discard()
-        self._conn = self._take()  # raises if someone else holds it now
-        log.warning("the leader lock had been lost; re-acquired it")
-        return False
-
-    def release(self) -> None:
-        if self._conn is None:
-            return
-        try:
-            self._conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": LEADER_LOCK_KEY})
-        except Exception:
-            pass
-        finally:
-            self._discard()
+    if env is not None:
+        settings = replace(
+            settings,
+            telegram_bot_token=env.get("TELEGRAM_BOT_TOKEN") or None,
+            telegram_chat_id=env.get("TELEGRAM_CHAT_ID") or None,
+        )
+    container = Container(settings, flags=flags, http_client=http_client)
+    channels = container.channels()
+    return WorkerContext(container, channels, bot=container.telegram_bot(channels))
 
 
 async def _pause(stop: asyncio.Event, seconds: float) -> None:
@@ -145,7 +80,7 @@ async def _pause(stop: asyncio.Event, seconds: float) -> None:
         pass
 
 
-async def _bot_loop(bot: TelegramBot, stop: asyncio.Event) -> None:
+async def _bot_loop(bot, stop: asyncio.Event) -> None:
     offset: int | None = None
     try:  # resume where the last run stopped, so handled commands are never replayed
         offset = await asyncio.to_thread(bot.load_offset)
@@ -162,16 +97,16 @@ async def _bot_loop(bot: TelegramBot, stop: asyncio.Event) -> None:
 async def run(
     stop: asyncio.Event, interval: float = 60.0, ctx: WorkerContext | None = None
 ) -> None:
-    flags = FeatureFlags.load()
     names = [c.name for c in ctx.channels] if ctx else []
-    log.info("worker started; features=%s channels=%s", flags.as_dict(), names)
+    features = ctx.container.flags.as_dict() if ctx else {}
+    log.info("worker started; features=%s channels=%s", features, names)
     bot_task = asyncio.create_task(_bot_loop(ctx.bot, stop)) if ctx and ctx.bot else None
     try:
         while not stop.is_set():
             if ctx is not None and ctx.lock is not None:
                 try:
                     await asyncio.to_thread(ctx.lock.ensure)
-                except WorkerAlreadyRunningError as exc:
+                except InstanceAlreadyRunning as exc:
                     log.error("%s; stopping so only one instance sends alerts", exc)
                     ctx.exit_code = 3
                     stop.set()
@@ -182,9 +117,7 @@ async def run(
                 log.info("heartbeat")
             else:
                 try:
-                    sent = await asyncio.to_thread(
-                        retry_failed, ctx.engine, ctx.channels, ctx.policy
-                    )
+                    sent = await asyncio.to_thread(ctx.deliver)
                     if sent:
                         log.info("re-sent %d failed deliveries", sent)
                 except Exception as exc:
@@ -206,10 +139,10 @@ def main() -> None:
     if ctx is None:
         log.warning("no database configured: heartbeat only")
     else:
-        ctx.lock = LeaderLock(ctx.engine)
+        ctx.lock = ctx.container.leader_lock
         try:
             ctx.lock.acquire()
-        except WorkerAlreadyRunningError as exc:
+        except InstanceAlreadyRunning as exc:
             log.error("%s; exiting", exc)
             raise SystemExit(3) from None
 
@@ -226,7 +159,7 @@ def main() -> None:
         if ctx is not None:
             if ctx.lock is not None:
                 ctx.lock.release()
-            ctx.engine.dispose()
+            ctx.container.dispose()
     if ctx is not None and ctx.exit_code:
         raise SystemExit(ctx.exit_code)
 

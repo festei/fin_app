@@ -3,26 +3,45 @@ application (HTTP app, worker, flows). It is the only code allowed to know every
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
+import httpx
 from sqlalchemy import Engine
 
+from fin_application.alerts import DeliverDueAlerts, ProcessSignals
+from fin_application.bot import BotCommands
 from fin_application.ingestion import IngestFundamentals, IngestPrices, IngestYields, SyncUniverse
 from fin_application.job_runs import JobRunTracker
 from fin_application.ports import (
+    AlertChannel,
+    AlertPolicySource,
     Clock,
     FundamentalsSource,
     PriceSource,
     ScoringConfigSource,
     ScoringEngine,
+    SingleInstanceGuard,
     UnitOfWorkFactory,
     UniverseSource,
     YieldSource,
 )
 from fin_application.scoring import ScoreSecurityLive
+from fin_application.scoring_run import RunScoring
+from fin_application.signals import ScoreUniverse
+from fin_application.watchlist import AlertFeed, ChannelService, Opportunities, WatchlistService
+from fin_bootstrap.channels import build_channels
 from fin_bootstrap.clock import SystemClock
 from fin_bootstrap.settings import Settings
-from fin_config import ConfigLocator, YamlScoringConfig, YamlUniverseSource
+from fin_config import (
+    ConfigLocator,
+    FeatureFlags,
+    YamlAlertPolicy,
+    YamlScoringConfig,
+    YamlUniverseSource,
+)
 from fin_langgraph import LangGraphScoringEngine
 from fin_persistence import SqlUnitOfWork, make_engine
+from fin_persistence.leader_lock import PgAdvisoryLeaderLock
 from fin_providers import (
     EdgarClient,
     EdgarFundamentalsSource,
@@ -30,6 +49,7 @@ from fin_providers import (
     FredYieldSource,
     YahooPriceSource,
 )
+from fin_telegram import TelegramBot, TelegramChannel
 
 
 class DatabaseNotConfigured(RuntimeError):
@@ -51,6 +71,9 @@ class Container:
         price_source: PriceSource | None = None,
         scoring_engine: ScoringEngine | None = None,
         scoring_config: ScoringConfigSource | None = None,
+        alert_policy: AlertPolicySource | None = None,
+        flags: FeatureFlags | None = None,
+        http_client: httpx.Client | None = None,
     ):
         self.settings = settings
         self.clock: Clock = clock or SystemClock()
@@ -61,6 +84,9 @@ class Container:
         self._price_source = price_source
         self._scoring_engine = scoring_engine
         self._scoring_config = scoring_config
+        self._alert_policy = alert_policy
+        self._flags = flags
+        self._http_client = http_client
 
     @classmethod
     def from_environ(cls) -> Container:
@@ -126,6 +152,34 @@ class Container:
             self._scoring_config = YamlScoringConfig(ConfigLocator(self.settings.config_dir))
         return self._scoring_config
 
+    @property
+    def flags(self) -> FeatureFlags:
+        if self._flags is None:
+            self._flags = FeatureFlags.load()
+        return self._flags
+
+    @property
+    def alert_policy(self) -> AlertPolicySource:
+        if self._alert_policy is None:
+            self._alert_policy = YamlAlertPolicy(ConfigLocator(self.settings.config_dir))
+        return self._alert_policy
+
+    def channels(self) -> list[AlertChannel]:
+        """The in-app feed, plus Telegram if its flag is on. Raises ``ChannelConfigError`` when
+        a switched-on channel lacks its credentials."""
+        return build_channels(self.flags, self.settings, self._http_client)
+
+    def telegram_bot(self, channels: Sequence[AlertChannel] | None = None) -> TelegramBot | None:
+        """The command bot, or ``None`` when Telegram is off. Pass the channels already built so
+        the bot shares the channel's client."""
+        channels = self.channels() if channels is None else channels
+        channel = next((c for c in channels if isinstance(c, TelegramChannel)), None)
+        return TelegramBot(channel.client, self.bot_commands) if channel else None
+
+    @property
+    def leader_lock(self) -> SingleInstanceGuard:
+        return PgAdvisoryLeaderLock(self.engine)
+
     # --- use cases --------------------------------------------------------------------------
 
     @property
@@ -151,3 +205,55 @@ class Container:
     @property
     def score_security_live(self) -> ScoreSecurityLive:
         return ScoreSecurityLive(self.uow_factory, self.scoring_engine, self.scoring_config)
+
+    @property
+    def score_universe(self) -> ScoreUniverse:
+        return ScoreUniverse(self.uow_factory, self.scoring_engine, self.scoring_config, self.clock)
+
+    @property
+    def deliver_due_alerts(self) -> DeliverDueAlerts:
+        return DeliverDueAlerts(self.uow_factory, self.clock, self.alert_policy, self.channels)
+
+    @property
+    def process_signals(self) -> ProcessSignals:
+        return ProcessSignals(
+            self.uow_factory,
+            self.clock,
+            self.alert_policy,
+            self.channels,
+            self.deliver_due_alerts,
+        )
+
+    @property
+    def run_scoring(self) -> RunScoring:
+        return RunScoring(
+            self.uow_factory,
+            self.job_runs,
+            self.clock,
+            self.channels,
+            self.score_universe,
+            self.process_signals,
+            self.deliver_due_alerts,
+        )
+
+    @property
+    def watchlist(self) -> WatchlistService:
+        return WatchlistService(self.uow_factory)
+
+    @property
+    def channel_service(self) -> ChannelService:
+        return ChannelService(self.uow_factory, self.clock)
+
+    @property
+    def alert_feed(self) -> AlertFeed:
+        return AlertFeed(self.uow_factory, self.clock)
+
+    @property
+    def opportunities(self) -> Opportunities:
+        return Opportunities(self.uow_factory)
+
+    @property
+    def bot_commands(self) -> BotCommands:
+        return BotCommands(
+            self.uow_factory, self.watchlist, self.channel_service, self.opportunities
+        )

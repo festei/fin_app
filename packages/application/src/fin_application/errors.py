@@ -26,3 +26,15 @@ class RateLimitError(ProviderError):
 class AccessDeniedError(ProviderError):
     """The provider refused us (e.g. EDGAR 403 for a missing/invalid User-Agent). Retrying
     cannot help until the configuration is fixed, so ingestion aborts the run."""
+
+
+class ChannelError(ApplicationError, RuntimeError):
+    """Delivery through a channel failed. Never contains credentials (tokens, URLs with keys)."""
+
+
+class ChannelConfigError(ApplicationError, RuntimeError):
+    """A channel is switched on but not configured. Raised at startup, not at first alert."""
+
+
+class InstanceAlreadyRunning(ApplicationError, RuntimeError):
+    """Another instance holds the single-instance guard."""

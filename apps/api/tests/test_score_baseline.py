@@ -13,8 +13,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 import fin_api.main as main
-from fin_core.db import migrate, repo, signals_repo
+from fin_application import scoring
+from fin_core.db import migrate, repo
 from fin_core.db.session import make_engine, session_scope
+from fin_persistence import seed
 
 client = TestClient(main.app)
 NOW = datetime.now(UTC)
@@ -37,27 +39,34 @@ def db(monkeypatch, tmp_path):
 
 @pytest.fixture
 def calls(monkeypatch):
-    """Record what the endpoint passes to score_security, then run the real thing."""
+    """Record the baseline the endpoint hands to the signal decision, then run the real thing."""
     seen: list[dict] = []
-    real = main.score_security
+    real = scoring.score
 
-    def spy(session, ticker, as_of, **kw):
-        seen.append(kw)
-        return real(session, ticker, as_of, **kw)
+    def spy(metrics, engine, config, baseline=None):
+        baseline = baseline or scoring.Baseline()
+        seen.append(
+            {
+                "previous_conviction": baseline.previous_conviction,
+                "buy_armed": baseline.buy_armed,
+                "sell_armed": baseline.sell_armed,
+            }
+        )
+        return real(metrics, engine, config, baseline)
 
-    monkeypatch.setattr(main, "score_security", spy)
+    monkeypatch.setattr(scoring, "score", spy)
     return seen
 
 
 def store(engine, conviction, *, blocked=False, kind=None, age_days=1):
     with session_scope(engine) as s:
         sid = repo.get_security(s, "ACME").id
-        score = signals_repo.insert_score(
+        score = seed.insert_score(
             s, security_id=sid, as_of=NOW - timedelta(days=age_days), conviction=conviction,
             all_abstained=conviction is None, signal_blocked=blocked, explanation="", details={},
         )  # fmt: skip
         if kind:
-            signals_repo.insert_signal(
+            seed.insert_signal(
                 s, security_id=sid, score_id=score.id, kind=kind, conviction=conviction or 0,
                 as_of=NOW - timedelta(days=age_days), reason="",
             )  # fmt: skip

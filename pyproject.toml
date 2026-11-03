@@ -97,6 +97,7 @@ known-first-party = [
 # fixtures are imported by name from db_fixtures.py (see its docstring)
 "packages/persistence/tests/**" = ["TID251", "DTZ", "F811"]
 "packages/providers/tests/**" = ["TID251", "DTZ", "F811"]
+"packages/telegram/tests/**" = ["TID251", "DTZ", "F811"]
 "packages/providers/**" = ["TID251", "DTZ"]
 "packages/telegram/**" = ["TID251", "DTZ"]
 "packages/langgraph/**" = ["TID251", "DTZ"]
@@ -114,6 +115,7 @@ testpaths = [
     "packages/testkit/tests",
     "packages/persistence/tests",
     "packages/providers/tests",
+    "packages/telegram/tests",
     "packages/config/tests",
     "packages/bootstrap/tests",
     "apps/api/tests",
@@ -236,25 +238,13 @@ source_modules = ["fin_api", "fin_worker", "fin_flows"]
 forbidden_modules = ["fin_core"]
 ignore_imports = [
     "fin_api.main -> fin_core",
-    "fin_api.main -> fin_core.alerts.pipeline",
     "fin_api.main -> fin_core.db.models",
     "fin_api.main -> fin_core.db.repo",
     "fin_api.main -> fin_core.db.session",
-    "fin_api.main -> fin_core.db.signals_repo",
     "fin_api.main -> fin_core.features",
     "fin_api.main -> fin_core.sandbox.engine",
-    "fin_api.main -> fin_core.scoring",
-    "fin_api.worker -> fin_core.alerts.base",
-    "fin_api.worker -> fin_core.alerts.channels",
-    "fin_api.worker -> fin_core.alerts.pipeline",
-    "fin_api.worker -> fin_core.alerts.policy",
-    "fin_api.worker -> fin_core.alerts.telegram",
-    "fin_api.worker -> fin_core.db.session",
-    "fin_api.worker -> fin_core.features",
     "fin_flows.sandbox -> fin_core.db.session",
     "fin_flows.sandbox -> fin_core.sandbox.run",
-    "fin_flows.scoring -> fin_core.db.session",
-    "fin_flows.scoring -> fin_core.scoring_run",
 ]
 
 [[tool.importlinter.contracts]]
@@ -265,7 +255,6 @@ forbidden_modules = ["sqlalchemy"]
 allow_indirect_imports = true
 ignore_imports = [
     "fin_api.main -> sqlalchemy",
-    "fin_api.worker -> sqlalchemy",
 ]
 
 [[tool.importlinter.contracts]]

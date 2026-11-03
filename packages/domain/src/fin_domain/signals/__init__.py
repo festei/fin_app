@@ -1,5 +1,16 @@
 """Signals & Alerts context: when a conviction becomes a signal, and what happens to it."""
 
+from fin_domain.signals.alerts import (
+    AGREE_AT,
+    COMMAND_HINT,
+    Alert,
+    AlertPolicy,
+    Delivery,
+    DeliveryStatus,
+    LastAlert,
+    compose_alert,
+)
+from fin_domain.signals.channels import IN_APP, ChannelState
 from fin_domain.signals.decider import (
     BUY_REARM_BELOW,
     BUY_THRESHOLD,
@@ -10,14 +21,46 @@ from fin_domain.signals.decider import (
     SignalKind,
     decide_signal,
 )
+from fin_domain.signals.scores import (
+    BUY_KINDS,
+    SELL_KINDS,
+    MetricsSummary,
+    ScoreDetails,
+    ScoreEntry,
+    StoredSignal,
+    armed_after,
+    buy_armed,
+    is_actionable,
+    sell_armed,
+)
 
 __all__ = [
+    "AGREE_AT",
+    "BUY_KINDS",
     "BUY_REARM_BELOW",
     "BUY_THRESHOLD",
+    "COMMAND_HINT",
+    "IN_APP",
+    "SELL_KINDS",
     "SELL_REARM_ABOVE",
     "SELL_THRESHOLD",
+    "Alert",
+    "AlertPolicy",
+    "ChannelState",
     "Decision",
+    "Delivery",
+    "DeliveryStatus",
+    "LastAlert",
+    "MetricsSummary",
+    "ScoreDetails",
+    "ScoreEntry",
     "Signal",
     "SignalKind",
+    "StoredSignal",
+    "armed_after",
+    "buy_armed",
+    "compose_alert",
     "decide_signal",
+    "is_actionable",
+    "sell_armed",
 ]

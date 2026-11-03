@@ -22,6 +22,8 @@ class Settings:
     config_dir: Path | None = None  # FIN_CONFIG_DIR
     sec_user_agent: str | None = None  # SEC_USER_AGENT (EDGAR requires contact details)
     fred_api_key: str | None = None  # FRED_API_KEY
+    telegram_bot_token: str | None = None  # TELEGRAM_BOT_TOKEN (only used if the flag is on)
+    telegram_chat_id: str | None = None  # TELEGRAM_CHAT_ID
 
     @property
     def database_configured(self) -> bool:
@@ -46,4 +48,6 @@ class Settings:
             config_dir=Path(env["FIN_CONFIG_DIR"]) if env.get("FIN_CONFIG_DIR") else None,
             sec_user_agent=env.get("SEC_USER_AGENT") or None,
             fred_api_key=env.get("FRED_API_KEY") or None,
+            telegram_bot_token=env.get("TELEGRAM_BOT_TOKEN") or None,
+            telegram_chat_id=env.get("TELEGRAM_CHAT_ID") or None,
         )

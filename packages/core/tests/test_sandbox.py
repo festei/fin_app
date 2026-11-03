@@ -13,7 +13,7 @@ import pytest
 from conftest import bar
 from sqlalchemy import select
 
-from fin_core.db import migrate, repo, signals_repo
+from fin_core.db import migrate, repo
 from fin_core.db.models import (
     Portfolio,
     PortfolioSnapshot,
@@ -25,6 +25,7 @@ from fin_core.db.session import make_engine, session_scope
 from fin_core.sandbox import engine as sb
 from fin_core.sandbox.config import SandboxConfig
 from fin_core.sandbox.run import run_sandbox
+from fin_persistence import seed
 
 D = Decimal
 
@@ -215,11 +216,11 @@ def test_unknown_targets_and_wrong_modes_are_refused(db):
 def signal(engine, ticker, kind, day):
     with session_scope(engine) as s:
         sid = repo.get_security(s, ticker).id
-        score = signals_repo.insert_score(
+        score = seed.insert_score(
             s, security_id=sid, as_of=at(day, 21), conviction=80.0, all_abstained=False,
             signal_blocked=False, explanation="", details={},
         )  # fmt: skip
-        return signals_repo.insert_signal(
+        return seed.insert_signal(
             s, security_id=sid, score_id=score.id, kind=kind, conviction=80.0, as_of=at(day, 21),
             reason="",
         ).id  # fmt: skip

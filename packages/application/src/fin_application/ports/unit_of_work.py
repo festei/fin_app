@@ -18,6 +18,16 @@ from fin_application.ports.market_data import (
     SecurityRepository,
     YieldRepository,
 )
+from fin_application.ports.signals import (
+    AlertFeedQuery,
+    AlertRepository,
+    BotCursorStore,
+    ChannelStateRepository,
+    OpportunityQuery,
+    ScoreRepository,
+    SignalRepository,
+    WatchlistRepository,
+)
 
 
 class UnitOfWork(Protocol):
@@ -26,6 +36,14 @@ class UnitOfWork(Protocol):
     prices: PriceRepository
     facts: FactRepository
     yields: YieldRepository
+    scores: ScoreRepository
+    signals: SignalRepository
+    alerts: AlertRepository
+    watchlist: WatchlistRepository
+    channels: ChannelStateRepository
+    cursors: BotCursorStore
+    opportunities: OpportunityQuery
+    alert_feed: AlertFeedQuery
 
     def __enter__(self) -> Self: ...
 

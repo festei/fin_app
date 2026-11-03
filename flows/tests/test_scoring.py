@@ -1,57 +1,73 @@
 import pytest
 from prefect.testing.utilities import prefect_test_harness
 
+from fin_application.errors import ChannelConfigError
 from fin_application.runs import RunSummary
-from fin_core.db import migrate
-from fin_core.db.session import make_engine
+from fin_bootstrap import Container, Settings
 from fin_flows import pipeline, scoring, serve
+from fin_persistence import migrate
 
 
 @pytest.fixture
-def engine(tmp_path, monkeypatch):
+def url(tmp_path, monkeypatch):
     url = f"sqlite:///{tmp_path / 'scoring.db'}"
     migrate.upgrade(url)
-    eng = make_engine(url)
-    monkeypatch.setattr(scoring, "make_engine", lambda: eng)
     monkeypatch.delenv("FEATURE_TELEGRAM_ENABLED", raising=False)
-    return eng
+    return url
 
 
-def test_flow_runs_the_real_scoring_run_on_an_empty_universe(engine):
+def use_container(monkeypatch, url, **overrides):
+    monkeypatch.setattr(
+        scoring, "_container", lambda: Container(Settings(database_url=url), **overrides)
+    )
+
+
+class FakeRun:
+    """Stands in for ``container.run_scoring`` and records how it was called."""
+
+    def __init__(self, summary):
+        self.summary, self.seen = summary, {}
+
+    def execute(self, as_of=None, tickers=None):
+        self.seen["tickers"] = tickers
+        return self.summary
+
+
+class FakeContainer:
+    def __init__(self, run):
+        self.run_scoring = run
+
+    def dispose(self):
+        pass
+
+
+def test_flow_runs_the_real_scoring_run_on_an_empty_universe(url, monkeypatch):
+    use_container(monkeypatch, url)
     with prefect_test_harness():
         out = scoring.score_universe_flow()
     assert out["source"] == "scoring" and out["status"] == "ok" and out["rows"] == 0
 
 
-def test_flow_passes_the_tickers_through(engine, monkeypatch):
-    seen = {}
-
-    def fake_run(eng, *, tickers=None, **kw):
-        seen["tickers"] = tickers
-        return RunSummary("scoring", status="ok", rows=2, signals=1, alerts=1)
-
-    monkeypatch.setattr(scoring, "run_scoring", fake_run)
+def test_flow_passes_the_tickers_through(url, monkeypatch):
+    run = FakeRun(RunSummary("scoring", status="ok", rows=2, signals=1, alerts=1))
+    monkeypatch.setattr(scoring, "_container", lambda: FakeContainer(run))
     with prefect_test_harness():
         out = scoring.score_universe_flow(["AAA"])
-    assert seen["tickers"] == ["AAA"] and (out["signals"], out["alerts"]) == (1, 1)
+    assert run.seen["tickers"] == ["AAA"] and (out["signals"], out["alerts"]) == (1, 1)
 
 
-def test_flow_fails_when_the_whole_run_failed(engine, monkeypatch):
-    monkeypatch.setattr(
-        scoring,
-        "run_scoring",
-        lambda eng, **kw: RunSummary("scoring", status="failed", failed={"AAA": "boom"}),
-    )
+def test_flow_fails_when_the_whole_run_failed(url, monkeypatch):
+    run = FakeRun(RunSummary("scoring", status="failed", failed={"AAA": "boom"}))
+    monkeypatch.setattr(scoring, "_container", lambda: FakeContainer(run))
     with prefect_test_harness(), pytest.raises(RuntimeError, match="scoring run failed"):
         scoring.score_universe_flow()
 
 
-def test_flow_fails_loudly_on_an_invalid_channel_configuration(engine, monkeypatch):
-    from fin_core.alerts.base import ChannelConfigError
-
+def test_flow_fails_loudly_on_an_invalid_channel_configuration(url, monkeypatch):
     monkeypatch.setenv("FEATURE_TELEGRAM_ENABLED", "true")
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    use_container(monkeypatch, url)
     with prefect_test_harness(), pytest.raises(ChannelConfigError):
         scoring.score_universe_flow()
 
