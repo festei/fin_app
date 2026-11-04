@@ -8,11 +8,13 @@ build() { docker build -q -f "$1" ${3:+--build-arg "$3"} -t "$2:smoke" . >/dev/n
 
 build deploy/python.Dockerfile fin-api PACKAGE=fin-api
 build deploy/python.Dockerfile fin-flows PACKAGE=fin-flows
+build deploy/python.Dockerfile fin-worker PACKAGE=fin-worker
 build deploy/web.Dockerfile fin-web
 
 # Python images must import the installed (non-editable) packages and find config/.
 docker run --rm fin-api:smoke python -c \
-  "import fin_api.main, fin_core.graph as g; g.build_graph(); g.load_config(); print('fin-api import ok')"
+  "import fin_api.main; from fin_bootstrap import Container, Settings; c = Container(Settings()); c.scoring_engine; c.scoring_config.load(); print('fin-api import ok')"
+docker run --rm fin-worker:smoke python -c "import fin_worker.worker; print('fin-worker import ok')"
 docker run --rm fin-flows:smoke python -c "import fin_flows.scoring; print('fin-flows import ok')"
 docker run --rm --entrypoint test fin-web:smoke -f /usr/share/nginx/html/index.html && echo "fin-web build present"
 
@@ -29,7 +31,7 @@ docker run --rm --add-host api:127.0.0.1 -e API_TOKEN=abc123 -e AUTH_BASIC=off \
   fin-web:smoke nginx -t 2>&1 | grep -q "test is successful" && echo "fin-web renders a valid nginx config"
 
 # All images must run as a non-root user.
-for img in fin-api fin-flows fin-web; do
+for img in fin-api fin-flows fin-worker fin-web; do
   user=$(docker image inspect "$img:smoke" --format '{{.Config.User}}')
   if [ -z "$user" ] || [ "$user" = "root" ] || [ "$user" = "0" ]; then
     echo "FAIL: $img runs as root (user='$user')" >&2

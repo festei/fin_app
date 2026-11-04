@@ -9,10 +9,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from fin_api.main import app, dispose_engines
-from fin_core.db import migrate, repo
-from fin_core.db.models import Portfolio, PriceBar, SandboxOrder
-from fin_core.db.session import make_engine, session_scope
-from fin_core.sandbox import engine as sandbox
+from fin_bootstrap import Container, Settings
+from fin_persistence import migrate, repo
+from fin_persistence.session import make_engine, session_scope
+from fin_persistence.tables import Portfolio, PortfolioSnapshot, PriceBar, SandboxOrder
 
 TOKEN = "test-token"
 client = TestClient(app, headers={"Authorization": f"Bearer {TOKEN}"})
@@ -38,6 +38,15 @@ def db(monkeypatch, tmp_path):
         repo.upsert_securities(s, [{"ticker": "AAA", "name": "Alpha"}, {"ticker": "BBB"}])
     yield engine
     engine.dispose()
+
+
+def run_step(engine, as_of):
+    """The scheduled sandbox step, as the nightly flow runs it."""
+    container = Container(Settings(database_url=engine.url.render_as_string(hide_password=False)))
+    try:
+        return container.run_sandbox.execute(as_of=as_of)
+    finally:
+        container.dispose()
 
 
 def add_bars(engine, ticker, closes):
@@ -112,7 +121,7 @@ def test_an_order_waits_for_a_later_close_then_the_step_fills_it(db):
         close = 12.5
         bar = dict(ts=tomorrow.replace(hour=21), open=close, high=close, low=close, close=close)
         repo.upsert_prices(s, repo.get_security(s, "AAA").id, [{**bar, "volume": 1}])
-        sandbox.settle(s, s.get(Portfolio, pid), tomorrow.replace(hour=23))
+    run_step(db, tomorrow.replace(hour=23))
     filled = client.get(f"/api/portfolios/{pid}/orders").json()[0]
     assert (filled["status"], filled["fill_price"], filled["fill_quantity"]) == (
         "filled",
@@ -164,10 +173,12 @@ def test_order_errors(db):
 def test_history_returns_the_equity_curve(db):
     pid = new_portfolio()["id"]
     with session_scope(db) as s:
-        p = s.get(Portfolio, pid)
-        sandbox.snapshot(s, p, datetime(2025, 3, 10, 22, tzinfo=UTC))
-        p.cash = 120
-        sandbox.snapshot(s, p, datetime(2025, 3, 11, 22, tzinfo=UTC))
+        for day, cash in ((date(2025, 3, 10), 100), (date(2025, 3, 11), 120)):
+            s.add(
+                PortfolioSnapshot(
+                    portfolio_id=pid, as_of=day, cash=cash, positions_value=0, total_value=cash
+                )
+            )
     assert client.get(f"/api/portfolios/{pid}/history").json() == [
         {"as_of": "2025-03-10", "cash": 100.0, "positions_value": 0.0, "total_value": 100.0},
         {"as_of": "2025-03-11", "cash": 120.0, "positions_value": 0.0, "total_value": 120.0},

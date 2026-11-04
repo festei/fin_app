@@ -36,10 +36,10 @@ flowchart LR
     sb["portfolio endpoints"]
     gd["require_write_token"]
   end
-  sc --> core1["fin_core.scoring, graph, metrics"]
-  un --> core2["fin_core.db.repo, signals_repo"]
-  al --> core3["fin_core.db.signals_repo,<br/>alerts.pipeline.feed_item"]
-  sb --> core4["fin_core.sandbox.engine"]
+  sc --> core1["fin_application.scoring"]
+  un --> core2["fin_application.watchlist<br/>(Opportunities)"]
+  al --> core3["fin_application.watchlist<br/>(AlertFeed)"]
+  sb --> core4["fin_application.sandbox"]
   gd -.-> al
   gd -.-> sb
 ```

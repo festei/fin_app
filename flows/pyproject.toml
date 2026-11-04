@@ -4,7 +4,8 @@ version = "0.1.0"
 description = "Prefect flows for slow batch work (ingestion, scoring, nightly sandbox valuation)"
 requires-python = ">=3.12"
 dependencies = [
-    "fin-core",
+    "fin-bootstrap",
+    "fin-application",
     "prefect>=3.0",
 ]
 

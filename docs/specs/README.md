@@ -22,6 +22,7 @@ One spec per plan that was executed to build this repository, written **retrospe
 | 006 | [Paper-trading sandbox](006-paper-trading-sandbox.md) | 5 | [#15](https://github.com/festei/fin_app/pull/15) | Delivered |
 | 007 | [Read APIs for the UI](007-ui-read-apis.md) | 4 | [#16](https://github.com/festei/fin_app/pull/16) | Delivered |
 | 008 | [Trading UI](008-trading-ui.md) | 4 | [#17](https://github.com/festei/fin_app/pull/17) | Delivered |
+| 009 | [Redesign around DDD and hexagonal architecture](009-hexagonal-redesign.md) | refactor | n/a | Delivered |
 
 Every PR went through at least one review round whose findings were fixed in a follow-up commit on
 the same branch. Each spec ends with a **Review outcomes** section recording what changed.

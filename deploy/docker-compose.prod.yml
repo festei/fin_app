@@ -39,7 +39,7 @@ services:
   migrate:
     <<: *common
     image: fin-api:${TAG:?set TAG}
-    command: python -m fin_core.db.migrate upgrade
+    command: python -m fin_bootstrap.migrate upgrade
     restart: "no"
     environment: *dbenv
     depends_on: { db: { condition: service_healthy } }
@@ -60,8 +60,8 @@ services:
 
   worker:
     <<: *common
-    image: fin-api:${TAG:?set TAG}
-    command: python -m fin_api.worker
+    image: fin-worker:${TAG:?set TAG}
+    command: python -m fin_worker
     stop_grace_period: 30s
     environment: *dbenv
     depends_on: { migrate: { condition: service_completed_successfully } }

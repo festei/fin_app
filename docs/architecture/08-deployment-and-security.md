@@ -32,7 +32,7 @@ flowchart TB
 | Published ports | web 8080, api 8000, db 5432, prefect 4200, **all bound to 127.0.0.1** | web only (`80:8080`); api, db and prefect stay internal |
 | Basic auth | off | required; `HTPASSWD_FILE` mounted and the container refuses to start without it |
 | `API_TOKEN` | defaults to `dev-token` (well known) | required (`${API_TOKEN:?...}`) |
-| Images | built from the repo | `fin-api`, `fin-flows`, `fin-web` at `${TAG}` |
+| Images | built from the repo | `fin-api`, `fin-flows`, `fin-worker`, `fin-web` at `${TAG}` |
 | TLS | none | **a terminator must sit in front** of the web container (it speaks plain HTTP) |
 
 Start-up order: `db`, then `migrate` (one-shot), then `api`, `worker`, `flows`; `web` after `api`.

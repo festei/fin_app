@@ -1,0 +1,17 @@
+[project]
+name = "fin-config"
+version = "0.1.0"
+description = "Driven adapter: YAML/env configuration, feature flags, universe files."
+requires-python = ">=3.12"
+dependencies = [
+    "fin-application",
+    "fin-domain",
+    "pyyaml>=6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fin_config"]

@@ -1,0 +1,17 @@
+[project]
+name = "fin-telegram"
+version = "0.1.0"
+description = "Telegram adapter: alert channel (driven) and command bot (driving)."
+requires-python = ">=3.12"
+dependencies = [
+    "fin-application",
+    "fin-domain",
+    "httpx>=0.27",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fin_telegram"]

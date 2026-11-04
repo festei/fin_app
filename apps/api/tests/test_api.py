@@ -69,8 +69,8 @@ def seeded_db(monkeypatch, tmp_path):
     from datetime import UTC, date, datetime
     from decimal import Decimal
 
-    from fin_core.db import migrate, repo
-    from fin_core.db.session import make_engine, session_scope
+    from fin_persistence import migrate, repo
+    from fin_persistence.session import make_engine, session_scope
 
     clear_db_env(monkeypatch)
     url = f"sqlite:///{tmp_path / 'score.db'}"
@@ -169,9 +169,9 @@ def test_dispose_engines_closes_and_forgets_the_cached_engines(monkeypatch, tmp_
 
     seeded_db(monkeypatch, tmp_path)
     assert client.get("/readyz").status_code == 200
-    assert main._engines  # an engine was created and cached
+    assert main._containers  # a container (and its engine) was created and cached
     dispose_engines()
-    assert main._engines == {}
+    assert main._containers == {}
 
 
 def test_response_carries_all_abstained_and_allows_no_conviction():
@@ -193,3 +193,22 @@ def test_response_carries_all_abstained_and_allows_no_conviction():
         philosophy_results={}, signal=None,
     )  # fmt: skip
     assert none.model_dump()["conviction"] is None and none.all_abstained is True
+
+
+def test_the_per_database_container_keeps_every_other_setting_from_the_environment(
+    monkeypatch, tmp_path
+):
+    """Only the database URL and the probe timeout are replaced; the rest of the settings (here
+    the config directory) must not be reset to defaults."""
+    import fin_api.main as main
+
+    monkeypatch.setenv("FIN_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "12345")
+    container = main._container_for("sqlite:///" + str(tmp_path / "x.db"))
+    try:
+        assert container.settings.database_url == "sqlite:///" + str(tmp_path / "x.db")
+        assert container.settings.db_connect_timeout == 3
+        assert container.settings.config_dir == tmp_path
+        assert container.settings.telegram_chat_id == "12345"
+    finally:
+        main.dispose_engines()
