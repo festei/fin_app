@@ -72,6 +72,12 @@ class InMemoryPriceRepository:
         inside = [b for ts, b in self.bars.get(ticker, {}).items() if start <= ts <= end]
         return min(inside, key=lambda b: b.ts, default=None)
 
+    def bars_since(self, ticker: Ticker, since: datetime) -> list[PriceBar]:
+        self._require(ticker)
+        return sorted(
+            (b for ts, b in self.bars.get(ticker, {}).items() if ts >= since), key=lambda b: b.ts
+        )
+
     def closes_since(self, ticker: Ticker, since: datetime) -> Mapping[datetime, float]:
         return {ts: b.close for ts, b in self.bars.get(ticker, {}).items() if ts >= since}
 
@@ -120,3 +126,31 @@ class InMemoryYieldRepository:
             return None
         day = max(days)
         return YieldPoint(day, self.yields[series_id][day])
+
+
+class InMemorySecuritySearchQuery:
+    def __init__(self, securities: dict[Ticker, Security]):
+        self._securities = securities
+
+    def search(
+        self,
+        q: str | None = None,
+        sector: str | None = None,
+        kind: str | None = None,
+        limit: int = 50,
+    ) -> list[Security]:
+        needle = q.strip().lower() if q and q.strip() else None
+        rows = []
+        for sec in sorted(self._securities.values(), key=lambda s: str(s.ticker)):
+            if (
+                not sec.active
+                or (sector and sec.sector != sector)
+                or (kind and sec.kind.value != kind)
+            ):
+                continue
+            if needle and not (
+                str(sec.ticker).lower().startswith(needle) or needle in (sec.name or "").lower()
+            ):
+                continue
+            rows.append(replace(sec))
+        return rows[:limit]

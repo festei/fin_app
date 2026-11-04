@@ -94,6 +94,7 @@ jobs:
         include:
           - { name: fin-api, file: deploy/python.Dockerfile, args: "PACKAGE=fin-api" }
           - { name: fin-flows, file: deploy/python.Dockerfile, args: "PACKAGE=fin-flows" }
+          - { name: fin-worker, file: deploy/python.Dockerfile, args: "PACKAGE=fin-worker" }
           - { name: fin-web, file: deploy/web.Dockerfile, args: "" }
     steps:
       - uses: actions/checkout@v4
@@ -117,12 +118,13 @@ jobs:
       - name: Smoke test (python images import and find config/)
         if: startsWith(matrix.file, 'deploy/python')
         run: |
-          if [ "${{ matrix.name }}" = "fin-api" ]; then
-            docker run --rm ${{ matrix.name }}:ci python -c \
-              "import fin_api.main, fin_core.graph as g; g.build_graph(); g.load_config()"
-          else
-            docker run --rm ${{ matrix.name }}:ci python -c "import fin_flows.scoring"
-          fi
+          case "${{ matrix.name }}" in
+            fin-api)
+              docker run --rm ${{ matrix.name }}:ci python -c \
+                "import fin_api.main; from fin_bootstrap import Container, Settings; c = Container(Settings()); c.scoring_engine; c.scoring_config.load()" ;;
+            fin-worker) docker run --rm ${{ matrix.name }}:ci python -c "import fin_worker.worker" ;;
+            *) docker run --rm ${{ matrix.name }}:ci python -c "import fin_flows.scoring" ;;
+          esac
       - name: Smoke test (web image contains the build)
         if: matrix.name == 'fin-web'
         run: docker run --rm --entrypoint test ${{ matrix.name }}:ci -f /usr/share/nginx/html/index.html

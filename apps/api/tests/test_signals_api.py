@@ -8,10 +8,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from fin_api.main import app, dispose_engines
-from fin_core.db import migrate, repo
-from fin_core.db.models import AlertDelivery
-from fin_core.db.session import make_engine, session_scope
-from fin_persistence import seed
+from fin_persistence import migrate, repo, seed
+from fin_persistence.session import make_engine, session_scope
+from fin_persistence.tables import AlertDelivery
 
 TOKEN = "test-token"
 client = TestClient(app, headers={"Authorization": f"Bearer {TOKEN}"})

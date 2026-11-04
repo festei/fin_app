@@ -42,7 +42,6 @@ INFRASTRUCTURE = {
 }
 # Everything else in this repository sits outside the core.
 OUTSIDE_THE_CORE = {
-    "fin_core",
     "fin_persistence",
     "fin_providers",
     "fin_telegram",

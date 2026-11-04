@@ -14,6 +14,7 @@ GitHub. Read them in order for a tour, or jump to the one you need.
 | 07 | [API and web UI](07-api-and-web.md) | Endpoints, the React app's structure and data flow. |
 | 08 | [Deployment and security](08-deployment-and-security.md) | Compose topologies, the auth chain, trust boundaries. |
 | 09 | [Quality and tooling](09-quality-and-tooling.md) | How the code is checked: test layers, local commands, what CI would do. |
+| 10 | [Hexagonal architecture](10-hexagonal-architecture.md) | The protected core, ports and adapters, the dependency rule and how it is enforced. |
 
 ## The system in one picture
 
@@ -45,8 +46,8 @@ flowchart LR
 
 ## Reading guide
 
-- **Shared core.** Almost all logic is in the `fin_core` library; the API, the worker and the flows
-  are thin shells around it. See [02](02-repository-map.md).
+- **Protected core.** Rules are in `fin_domain`, use cases in `fin_application`; the API, the worker and
+  the flows are thin shells that reach adapters only through the container. See [02](02-repository-map.md) and [10](10-hexagonal-architecture.md).
 - **Two data directions.** Ingestion writes facts, prices and yields; scoring reads them
   *point-in-time* and writes scores, signals, alerts and sandbox state. See [04](04-data-pipeline-and-scoring.md).
 - **Honesty is structural.** Missing data is `None` with a warning, a scorer can abstain, a blocked

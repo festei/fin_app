@@ -1,6 +1,6 @@
 """Programmatic Alembic runner. Migrations live inside the package so non-editable images ship
 them. The URL is always explicit; the command-line entry point (which reads the environment) is
-``fin_core.db.migrate`` until the composition root takes it over."""
+``fin_bootstrap.migrate``."""
 
 from __future__ import annotations
 

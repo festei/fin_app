@@ -38,3 +38,9 @@ class ChannelConfigError(ApplicationError, RuntimeError):
 
 class InstanceAlreadyRunning(ApplicationError, RuntimeError):
     """Another instance holds the single-instance guard."""
+
+
+class StorageUnavailable(ApplicationError, RuntimeError):
+    """The database could not be reached or answered with an error. Only the kind of error is in
+    the message (``database unavailable (OperationalError)``): the original can hold connection
+    details."""

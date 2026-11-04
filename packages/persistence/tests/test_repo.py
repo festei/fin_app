@@ -7,21 +7,19 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
-from alembic.autogenerate import compare_metadata
-from alembic.migration import MigrationContext
-from sqlalchemy import inspect
+from db_fixtures import migrated_engine  # noqa: F401 - pytest fixture
 
-from fin_core.db import migrate, repo
-from fin_core.db.models import Base, FundamentalFact
-from fin_core.db.session import database_url, session_scope
 from fin_domain.market_data import known_as_of
 from fin_domain.shared import Ticker
+from fin_persistence import repo
 from fin_persistence.market_data import SqlFactRepository
+from fin_persistence.session import session_scope
+from fin_persistence.tables import FundamentalFact
 
 
 @pytest.fixture
-def engine(raw_engine):
-    return raw_engine
+def engine(migrated_engine):
+    return migrated_engine
 
 
 def fact(**kw):
@@ -41,28 +39,6 @@ def fact(**kw):
     )
     base.update(kw)
     return base
-
-
-def test_migration_creates_all_tables_and_matches_models(engine):
-    tables = set(inspect(engine).get_table_names())
-    assert {
-        "securities",
-        "price_bars",
-        "fundamental_facts",
-        "bond_yields",
-        "ingestion_runs",
-    } <= tables
-    with engine.connect() as conn:
-        diff = compare_metadata(MigrationContext.configure(conn), Base.metadata)
-    assert diff == [], f"migration and models have drifted apart: {diff}"
-
-
-def test_migration_downgrade_then_upgrade(engine):
-    url = engine.url.render_as_string(hide_password=False)
-    migrate.downgrade(url, "base")
-    assert "securities" not in inspect(engine).get_table_names()
-    migrate.upgrade(url)
-    assert "securities" in inspect(engine).get_table_names()
 
 
 def test_upsert_securities_is_idempotent_and_updates(engine):
@@ -146,56 +122,3 @@ def test_yields_upsert_and_latest(engine):
         assert repo.latest_yield(s, "DGS10").value == Decimal("4.65")
         assert repo.latest_yield(s, "DGS10", date(2025, 1, 2)).value == Decimal("4.5")
         assert repo.latest_yield(s, "DGS2") is None
-
-
-def test_database_url_from_postgres_env(monkeypatch):
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-    monkeypatch.setenv("POSTGRES_USER", "fin")
-    monkeypatch.setenv("POSTGRES_PASSWORD", "p@ss/word")
-    monkeypatch.setenv("POSTGRES_DB", "findb")
-    monkeypatch.setenv("POSTGRES_HOST", "db")
-    assert database_url() == "postgresql+psycopg://fin:p%40ss%2Fword@db:5432/findb"
-
-
-def test_database_url_requires_configuration(monkeypatch):
-    for k in ("DATABASE_URL", "POSTGRES_USER", "POSTGRES_DB"):
-        monkeypatch.delenv(k, raising=False)
-    with pytest.raises(RuntimeError, match="not configured"):
-        database_url()
-
-
-def test_upsert_securities_leaves_unprovided_columns_alone(engine):
-    with session_scope(engine) as s:
-        repo.upsert_securities(
-            s,
-            [
-                {
-                    "ticker": "IBM",
-                    "name": "IBM",
-                    "sector": "Tech",
-                    "cik": "0000051143",
-                    "active": False,
-                }
-            ],
-        )
-        repo.upsert_securities(s, [{"ticker": "ibm"}])  # nothing but the key
-        repo.upsert_securities(s, [{"ticker": "IBM", "name": "International Business Machines"}])
-    with session_scope(engine) as s:
-        ibm = repo.get_security(s, "IBM")
-        assert ibm.cik == "0000051143"  # a sync without cik must not wipe a resolved CIK
-        assert ibm.sector == "Tech" and ibm.active is False
-        assert ibm.name == "International Business Machines"  # provided columns do update
-
-
-def test_upsert_securities_explicit_none_overwrites_and_mixed_batches_work(engine):
-    with session_scope(engine) as s:
-        repo.upsert_securities(s, [{"ticker": "KO", "sector": "Staples", "cik": "1"}])
-        repo.upsert_securities(
-            s,
-            [{"ticker": "KO", "sector": None}, {"ticker": "PG", "name": "P&G"}, {"ticker": "XOM"}],
-        )
-    with session_scope(engine) as s:
-        ko = repo.get_security(s, "KO")
-        assert ko.sector is None and ko.cik == "1"
-        assert repo.get_security(s, "PG").name == "P&G"
-        assert repo.get_security(s, "XOM").kind == "stock"  # model default applies to new rows

@@ -69,8 +69,8 @@ def seeded_db(monkeypatch, tmp_path):
     from datetime import UTC, date, datetime
     from decimal import Decimal
 
-    from fin_core.db import migrate, repo
-    from fin_core.db.session import make_engine, session_scope
+    from fin_persistence import migrate, repo
+    from fin_persistence.session import make_engine, session_scope
 
     clear_db_env(monkeypatch)
     url = f"sqlite:///{tmp_path / 'score.db'}"
@@ -169,9 +169,9 @@ def test_dispose_engines_closes_and_forgets_the_cached_engines(monkeypatch, tmp_
 
     seeded_db(monkeypatch, tmp_path)
     assert client.get("/readyz").status_code == 200
-    assert main._engines  # an engine was created and cached
+    assert main._containers  # a container (and its engine) was created and cached
     dispose_engines()
-    assert main._engines == {}
+    assert main._containers == {}
 
 
 def test_response_carries_all_abstained_and_allows_no_conviction():

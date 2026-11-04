@@ -8,9 +8,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from fin_api.main import app, dispose_engines
-from fin_core.db import migrate, repo
-from fin_core.db.session import make_engine, session_scope
-from fin_persistence import seed
+from fin_persistence import migrate, repo, seed
+from fin_persistence.session import make_engine, session_scope
 
 client = TestClient(app)
 

@@ -14,9 +14,8 @@ from fastapi.testclient import TestClient
 
 import fin_api.main as main
 from fin_application import scoring
-from fin_core.db import migrate, repo
-from fin_core.db.session import make_engine, session_scope
-from fin_persistence import seed
+from fin_persistence import migrate, repo, seed
+from fin_persistence.session import make_engine, session_scope
 
 client = TestClient(main.app)
 NOW = datetime.now(UTC)

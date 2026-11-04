@@ -5,9 +5,9 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import text
 
-from fin_core.db import migrate, repo
-from fin_core.db.session import make_engine, session_scope
 from fin_domain.market_data import CONCEPT_TAGS
+from fin_persistence import migrate, repo
+from fin_persistence.session import make_engine, session_scope
 
 
 @pytest.fixture(params=["sqlite", pytest.param("postgres", marks=pytest.mark.postgres)])

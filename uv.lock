@@ -20,7 +20,6 @@ members = [
     "fin-application",
     "fin-bootstrap",
     "fin-config",
-    "fin-core",
     "fin-domain",
     "fin-flows",
     "fin-langgraph",
@@ -714,7 +713,6 @@ dependencies = [
     { name = "fastapi" },
     { name = "fin-application" },
     { name = "fin-bootstrap" },
-    { name = "fin-core" },
     { name = "fin-domain" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -724,7 +722,6 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.111,<0.137" },
     { name = "fin-application", editable = "packages/application" },
     { name = "fin-bootstrap", editable = "packages/bootstrap" },
-    { name = "fin-core", editable = "packages/core" },
     { name = "fin-domain", editable = "packages/domain" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
 ]
@@ -808,45 +805,6 @@ requires-dist = [
 ]
 
 [[package]]
-name = "fin-core"
-version = "0.1.0"
-source = { editable = "packages/core" }
-dependencies = [
-    { name = "alembic" },
-    { name = "fin-application" },
-    { name = "fin-config" },
-    { name = "fin-domain" },
-    { name = "fin-persistence" },
-    { name = "httpx" },
-    { name = "langgraph" },
-    { name = "pandas" },
-    { name = "psycopg", extra = ["binary"] },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
-    { name = "pyyaml" },
-    { name = "sqlalchemy" },
-    { name = "yfinance" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "alembic", specifier = ">=1.13" },
-    { name = "fin-application", editable = "packages/application" },
-    { name = "fin-config", editable = "packages/config" },
-    { name = "fin-domain", editable = "packages/domain" },
-    { name = "fin-persistence", editable = "packages/persistence" },
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "langgraph", specifier = ">=0.2" },
-    { name = "pandas", specifier = ">=2.2" },
-    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
-    { name = "pydantic", specifier = ">=2.7" },
-    { name = "pydantic-settings", specifier = ">=2.3" },
-    { name = "pyyaml", specifier = ">=6" },
-    { name = "sqlalchemy", specifier = ">=2.0" },
-    { name = "yfinance", specifier = ">=0.2.40" },
-]
-
-[[package]]
 name = "fin-domain"
 version = "0.1.0"
 source = { editable = "packages/domain" }
@@ -858,7 +816,6 @@ source = { editable = "flows" }
 dependencies = [
     { name = "fin-application" },
     { name = "fin-bootstrap" },
-    { name = "fin-core" },
     { name = "prefect" },
 ]
 
@@ -866,7 +823,6 @@ dependencies = [
 requires-dist = [
     { name = "fin-application", editable = "packages/application" },
     { name = "fin-bootstrap", editable = "packages/bootstrap" },
-    { name = "fin-core", editable = "packages/core" },
     { name = "prefect", specifier = ">=3.0" },
 ]
 
@@ -962,11 +918,15 @@ name = "fin-worker"
 version = "0.1.0"
 source = { editable = "apps/worker" }
 dependencies = [
+    { name = "fin-application" },
     { name = "fin-bootstrap" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "fin-bootstrap", editable = "packages/bootstrap" }]
+requires-dist = [
+    { name = "fin-application", editable = "packages/application" },
+    { name = "fin-bootstrap", editable = "packages/bootstrap" },
+]
 
 [[package]]
 name = "fsspec"

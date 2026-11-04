@@ -1,5 +1,7 @@
 # Spec 009: Redesign around DDD and hexagonal architecture
 
+Status: delivered (steps 0-6). Nothing is committed by the tooling; the work is in the working tree.
+
 ## 1. Context
 
 `fin_core` is one package in which domain rules, use cases and infrastructure live side by side.
@@ -333,3 +335,13 @@ End to end, per step and at the end:
 - Deviations from the plan: the API's own response schemas still convert Decimals to floats (presentation, unchanged); the `NotFound` entity/key pair is turned back into the legacy `unknown portfolio 7` / `unknown ticker X` messages in the API.
 - Checked: ruff, 9 import-linter contracts, 819 tests on SQLite and 924 on real Postgres 16. **Equivalence with the original code (`34a2c4e`), now including the sandbox:** the demo seeder (35 weeks: a signal-driven portfolio and a manual one, orders, fills, fees, snapshots) gives row-for-row identical results in all 12 tables compared (10 sandbox orders with fill times, quantities, prices and fees; 70 snapshots; both portfolios' cash, signal cursor and strategy config; plus scores, signals, alerts, deliveries, prices, facts and 70 job runs). In the rebuilt images against Postgres, a strategy portfolio bought on a signal and a manual one filled its order over four scheduled steps (strategy $104, manual $110, history of 4 points each), and the API returned them with the legacy 404 text.
 - Ratchet: 6 ignored imports (5 into `fin_core`, 1 direct `sqlalchemy`), down from 9: all in `fin_api.main` (securities search, price history, score history, the version, the feature flags). Step 6 clears them.
+
+**Step 6 (apps and cleanup) is done. The redesign is complete.**
+- `fin_api.main` is container-only: no `sqlalchemy`, no `fin_persistence`, no `fin_core`. Its routes call use cases and query ports (`SecurityCatalog`, `PortfolioReader`, `AlertFeed`, `Opportunities`, `ScoreSecurityLive`); `StorageUnavailable` maps to 503.
+- The worker moved to `apps/worker` (`fin_worker`, `python -m fin_worker`) with its own image target; exit codes are unchanged (2 invalid channel config, 3 lost or contested lock). Migrations run through `python -m fin_bootstrap.migrate`. Both compose files, `ci.yml` and `scripts/smoke-images.sh` follow, and `flows/tests/test_compose.py` now checks the worker and migrate entry points.
+- Deleted: `packages/core` (`fin_core`) with all shims. The import-linter ratchets are gone: 8 contracts, no ignored imports. The scorer tests moved to `packages/bootstrap/tests/scoring` (they need the DB helpers).
+- Mistakes found on the way: the `fin_langgraph` tests were never in `testpaths` (and one distressed-company fixture did not veto; fixed). `packages/bootstrap/tests/test_repository_layout.py` now fails if a package's tests are missing from `testpaths` or a listed path does not exist.
+- Checked: ruff and format clean; 8 contracts kept; 847 tests passed on SQLite and the whole suite on Postgres 16; the core's 294 tests pass in an environment with only `fin-application` and the test kit (no SQLAlchemy installed). Planting `import sqlalchemy` in `fin_domain` makes both `lint-imports` and the isolation test fail. **Equivalence with `34a2c4e`:** the demo seeder gives identical rows in all 14 tables (only wall-clock timestamps differ). Images `fin-api`, `fin-flows`, `fin-worker` build; migrations reach `0004 (head)`; a second worker exits 3, a bad channel configuration exits 2, SIGTERM stops it cleanly; both compose files validate (the prod one needs `POSTGRES_PASSWORD`).
+- Found by the Postgres run: the catalog search expectation assumed binary ordering, but Postgres orders `A-B` and `AAPL` by locale collation. The query is unchanged from the original (same behaviour); the test now accepts either order for that pair.
+- Docs: `docs/architecture/02-repository-map.md` rewritten, `10-hexagonal-architecture.md` added, diagrams 01/05/06/07/08 updated, `CLAUDE.md` and `README.md` describe the new layout.
+

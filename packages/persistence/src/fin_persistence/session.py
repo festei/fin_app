@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from urllib.parse import quote
 
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 
@@ -39,3 +39,14 @@ def session_scope(engine: Engine) -> Iterator[Session]:
         raise
     finally:
         session.close()
+
+
+def ping(engine: Engine) -> None:
+    """Raise ``StorageUnavailable`` unless the database answers a trivial query."""
+    from fin_application.errors import StorageUnavailable
+
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception as exc:
+        raise StorageUnavailable(f"database unavailable ({type(exc).__name__})") from None

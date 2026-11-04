@@ -35,6 +35,7 @@ from fin_application.sandbox import (
 )
 from fin_application.scoring import ScoreSecurityLive
 from fin_application.scoring_run import RunScoring
+from fin_application.securities import SecurityCatalog
 from fin_application.signals import ScoreUniverse
 from fin_application.watchlist import AlertFeed, ChannelService, Opportunities, WatchlistService
 from fin_bootstrap.channels import build_channels
@@ -51,6 +52,7 @@ from fin_config import (
 from fin_langgraph import LangGraphScoringEngine
 from fin_persistence import SqlUnitOfWork, make_engine
 from fin_persistence.leader_lock import PgAdvisoryLeaderLock
+from fin_persistence.session import ping
 from fin_providers import (
     EdgarClient,
     EdgarFundamentalsSource,
@@ -117,6 +119,10 @@ class Container:
     def uow_factory(self) -> UnitOfWorkFactory:
         engine = self.engine
         return lambda: SqlUnitOfWork(engine)
+
+    def check_database(self) -> None:
+        """Raise ``StorageUnavailable`` unless the database answers."""
+        ping(self.engine)
 
     def dispose(self) -> None:
         """Release the connection pool. Safe to call more than once."""
@@ -294,3 +300,7 @@ class Container:
     @property
     def portfolio_reader(self) -> PortfolioReader:
         return PortfolioReader(self.uow_factory, self.clock)
+
+    @property
+    def security_catalog(self) -> SecurityCatalog:
+        return SecurityCatalog(self.uow_factory, self.clock)

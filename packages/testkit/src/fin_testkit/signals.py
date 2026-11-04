@@ -9,7 +9,7 @@ from dataclasses import replace
 from datetime import datetime
 
 from fin_application.errors import ConcurrencyConflict
-from fin_application.ports import OpportunityRow
+from fin_application.ports import OpportunityRow, ScorePointRow, SignalPointRow
 from fin_domain.market_data import Security
 from fin_domain.shared import NotFound, Ticker
 from fin_domain.signals import (
@@ -244,3 +244,23 @@ class InMemoryAlertFeedQuery:
         if unread_only:
             rows = [a for a in rows if a.read_at is None]
         return [deepcopy(a) for a in rows[:limit]]
+
+
+class InMemoryScoreHistoryQuery:
+    def __init__(self, scores: dict[int, ScoreEntry], signals: dict[int, StoredSignal]):
+        self._scores, self._signals = scores, signals
+
+    def scores(self, ticker: Ticker, since: datetime, limit: int) -> list[ScorePointRow]:
+        mine = [s for s in self._scores.values() if s.ticker == ticker and s.computed_at >= since]
+        newest = sorted(mine, key=lambda s: (s.computed_at, s.id), reverse=True)[:limit][::-1]
+        return [
+            ScorePointRow(s.computed_at, s.as_of, s.conviction, s.signal_blocked, s.all_abstained)
+            for s in newest
+        ]
+
+    def signals(self, ticker: Ticker, since: datetime) -> list[SignalPointRow]:
+        mine = [s for s in self._signals.values() if s.ticker == ticker and s.signal.as_of >= since]
+        return [
+            SignalPointRow(s.signal.kind, s.signal.conviction, s.signal.as_of)
+            for s in sorted(mine, key=lambda s: s.id)
+        ]

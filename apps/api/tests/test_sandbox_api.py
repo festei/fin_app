@@ -10,9 +10,9 @@ from sqlalchemy import select
 
 from fin_api.main import app, dispose_engines
 from fin_bootstrap import Container, Settings
-from fin_core.db import migrate, repo
-from fin_core.db.models import Portfolio, PortfolioSnapshot, PriceBar, SandboxOrder
-from fin_core.db.session import make_engine, session_scope
+from fin_persistence import migrate, repo
+from fin_persistence.session import make_engine, session_scope
+from fin_persistence.tables import Portfolio, PortfolioSnapshot, PriceBar, SandboxOrder
 
 TOKEN = "test-token"
 client = TestClient(app, headers={"Authorization": f"Bearer {TOKEN}"})

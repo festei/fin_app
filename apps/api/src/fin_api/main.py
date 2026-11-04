@@ -8,36 +8,25 @@ from contextlib import asynccontextmanager, contextmanager
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from functools import lru_cache
+from importlib.metadata import version
 from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import Engine, or_, select, text
-from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
 
+from fin_application.errors import StorageUnavailable
 from fin_application.scoring import Baseline
 from fin_application.scoring import score as score_metrics
-from fin_bootstrap import Container, Settings
-from fin_core import __version__
-from fin_core.db import repo
-from fin_core.db.models import (
-    PriceBar,
-    ScoreRecord,
-    Security,
-    SignalRecord,
-)
-from fin_core.db.session import database_configured, database_url, make_engine, session_scope
-from fin_core.features import FeatureFlags
-from fin_domain.market_data import aggregate_candles
+from fin_bootstrap import Container, FeatureFlags, Settings
 from fin_domain.sandbox import OrderError
 from fin_domain.scoring import ScoreResult, SecurityMetrics
 from fin_domain.shared import NotFound
 from fin_domain.signals import Signal
 
 log = logging.getLogger("fin_api")
+__version__ = version("fin-api")
 
 
 @asynccontextmanager
@@ -125,16 +114,6 @@ def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
-_engines: dict[str, Engine] = {}
-
-
-def _engine(url: str) -> Engine:
-    """One engine (connection pool) per database URL, created lazily."""
-    if url not in _engines:
-        _engines[url] = make_engine(url, connect_timeout=3)  # a probe must not hang
-    return _engines[url]
-
-
 _containers: dict[str, Container] = {}
 
 
@@ -150,10 +129,7 @@ def _container_for(url: str) -> Container:
 
 
 def dispose_engines() -> None:
-    """Close every pooled connection and forget the engines (shutdown, and between tests)."""
-    for engine in _engines.values():
-        engine.dispose()
-    _engines.clear()
+    """Close every pooled connection and forget the containers (shutdown, and between tests)."""
     for container in _containers.values():
         container.dispose()
     _containers.clear()
@@ -168,14 +144,13 @@ def readyz() -> dict[str, str]:
     """
     _config()
     _scoring_engine()
-    if not database_configured():
+    settings = Settings.from_environ()
+    if not settings.database_configured:
         return {"status": "ready", "db": "not configured"}
     try:
-        with _engine(database_url()).connect() as conn:
-            conn.execute(text("SELECT 1"))
-    except Exception as exc:
-        # Only the exception type: the message can contain connection details.
-        raise HTTPException(503, detail=f"database unavailable ({type(exc).__name__})") from None
+        _container_for(settings.database_url).check_database()
+    except StorageUnavailable as exc:  # only the kind of error: the original can hold details
+        raise HTTPException(503, detail=str(exc)) from None
     return {"status": "ready", "db": "ok"}
 
 
@@ -219,8 +194,6 @@ def score_ticker(
     every visit to a stock that is already high); pass ``previous_conviction`` to override the
     baseline, or ``as_of`` for a what-if without one.
     """
-    if not database_configured():
-        raise HTTPException(503, detail="database not configured")
     today = datetime.now(UTC).date()
     if as_of is not None and as_of > today:
         raise HTTPException(422, detail=f"as_of {as_of} is in the future (today is {today} UTC)")
@@ -250,31 +223,32 @@ def score_ticker(
     )
 
 
+def _f(x: Decimal | float | None) -> float | None:
+    return None if x is None else float(x)
+
+
+def _iso(dt: datetime | None) -> str | None:
+    return dt.isoformat() if dt else None
+
+
+def _not_found(exc: NotFound) -> HTTPException:
+    return HTTPException(404, detail=f"unknown {exc.entity} {exc.key}")
+
+
 # --- alerts, opportunities, watchlist, channels --------------------------------------------------
-
-
-@contextmanager
-def _db() -> Iterator[Session]:
-    """A database session, or 503 (not configured / unreachable) like the other endpoints."""
-    if not database_configured():
-        raise HTTPException(503, detail="database not configured")
-    try:
-        with session_scope(_engine(database_url())) as session:
-            yield session
-    except SQLAlchemyError as exc:
-        raise HTTPException(503, detail=f"database unavailable ({type(exc).__name__})") from None
 
 
 @contextmanager
 def _app() -> Iterator[Container]:
     """The use cases for the configured database, or 503 (not configured / unreachable) like the
     other endpoints."""
-    if not database_configured():
+    settings = Settings.from_environ()
+    if not settings.database_configured:
         raise HTTPException(503, detail="database not configured")
     try:
-        yield _container_for(database_url())
-    except SQLAlchemyError as exc:
-        raise HTTPException(503, detail=f"database unavailable ({type(exc).__name__})") from None
+        yield _container_for(settings.database_url)
+    except StorageUnavailable as exc:
+        raise HTTPException(503, detail=str(exc)) from None
 
 
 class AlertOut(BaseModel):
@@ -401,7 +375,7 @@ def unwatch(ticker: str) -> dict[str, object]:
 def channels() -> list[dict[str, object]]:
     """Which alert channels are active, from the feature flags (Telegram is off by default)."""
     muted: dict[str, str | None] = {}
-    if database_configured():
+    if Settings.from_environ().database_configured:
         try:
             with _app() as app_:
                 until = app_.channel_service.state("telegram").muted_until
@@ -458,23 +432,6 @@ class ScoreHistory(BaseModel):
     signals: list[SignalPoint]  # transitions, for chart markers
 
 
-def _security(s: Session, ticker: str) -> Security:
-    sec = repo.get_security(s, ticker)
-    if sec is None:
-        raise HTTPException(404, detail=f"unknown ticker {ticker.upper()}")
-    return sec
-
-
-def _watched_tickers() -> set[str]:
-    with _app() as app_:
-        return set(app_.watchlist.tickers())
-
-
-def _like_escape(text_: str) -> str:
-    """Make user text match literally inside LIKE: escape the escape character, % and _."""
-    return text_.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-
 @app.get("/api/securities", response_model=list[SecurityOut])
 def list_securities(
     q: str | None = Query(None, max_length=50),
@@ -485,32 +442,18 @@ def list_securities(
     """Search the active universe by ticker prefix or name fragment (case-insensitive, matched
     literally: ``%``, ``_`` and ``\\`` are ordinary characters), optionally by sector or kind.
     Inactive securities are not listed, but their history stays readable by ticker."""
-    with _db() as s:
-        query = select(Security).where(Security.active.is_(True))
-        if q and q.strip():
-            like = _like_escape(q.strip())
-            query = query.where(
-                or_(
-                    Security.ticker.ilike(f"{like}%", escape="\\"),
-                    Security.name.ilike(f"%{like}%", escape="\\"),
-                )
-            )
-        if sector:
-            query = query.where(Security.sector == sector)
-        if kind:
-            query = query.where(Security.kind == kind)
-        rows = s.scalars(query.order_by(Security.ticker).limit(limit)).all()
-        watched = _watched_tickers()
-        return [
-            SecurityOut(
-                ticker=r.ticker,
-                name=r.name,
-                sector=r.sector,
-                kind=r.kind,
-                watched=r.ticker in watched,
-            )
-            for r in rows
-        ]
+    with _app() as app_:
+        rows = app_.security_catalog.search(q, sector, kind, limit)
+    return [
+        SecurityOut(
+            ticker=str(r.security.ticker),
+            name=r.security.name,
+            sector=r.security.sector,
+            kind=r.security.kind.value,
+            watched=r.watched,
+        )
+        for r in rows
+    ]
 
 
 @app.get("/api/securities/{ticker}/prices", response_model=list[BarOut])
@@ -523,15 +466,11 @@ def security_prices(
     consecutive bars are merged into candles (first open, max high, min low, last close, summed
     volume), so the result is valid for candlestick and high/low charts as well as close lines.
     Stored prices are split/dividend-adjusted. Inactive securities are still served."""
-    since = datetime.now(UTC) - timedelta(days=days)
-    with _db() as s:
-        sec = _security(s, ticker)
-        bars = s.scalars(
-            select(PriceBar)
-            .where(PriceBar.security_id == sec.id, PriceBar.ts >= since)
-            .order_by(PriceBar.ts)
-        ).all()
-    bars = aggregate_candles(bars, max_points)
+    with _app() as app_:
+        try:
+            bars = app_.security_catalog.prices(ticker, days, max_points)
+        except NotFound as exc:
+            raise _not_found(exc) from None
     return [
         BarOut(
             ts=b.ts.isoformat(),
@@ -553,38 +492,27 @@ def security_scores(
     Blocked and all-abstained runs are included but flagged, so a gap is visible as a gap. Plot
     against ``as_of`` (the scoring date), not ``computed_at`` (when the job ran). Inactive
     securities are still served."""
-    since = datetime.now(UTC) - timedelta(days=days)
-    with _db() as s:
-        sec = _security(s, ticker)
-        scores = s.scalars(
-            select(ScoreRecord)
-            .where(ScoreRecord.security_id == sec.id, ScoreRecord.computed_at >= since)
-            .order_by(ScoreRecord.computed_at.desc(), ScoreRecord.id.desc())
-            .limit(limit)
-        ).all()[::-1]
-        # markers only inside the returned window: if `limit` cut off older scores, so are signals
-        floor = scores[0].as_of if len(scores) == limit else since
-        signals = s.scalars(
-            select(SignalRecord)
-            .where(SignalRecord.security_id == sec.id, SignalRecord.as_of >= floor)
-            .order_by(SignalRecord.id)
-        ).all()
-        return ScoreHistory(
-            scores=[
-                ScorePoint(
-                    computed_at=_iso(r.computed_at),
-                    as_of=r.as_of.isoformat(),
-                    conviction=r.conviction,
-                    signal_blocked=r.signal_blocked,
-                    all_abstained=r.all_abstained,
-                )
-                for r in scores
-            ],
-            signals=[
-                SignalPoint(kind=x.kind, conviction=x.conviction, as_of=x.as_of.isoformat())
-                for x in signals
-            ],
-        )
+    with _app() as app_:
+        try:
+            history = app_.security_catalog.score_history(ticker, days, limit)
+        except NotFound as exc:
+            raise _not_found(exc) from None
+    return ScoreHistory(
+        scores=[
+            ScorePoint(
+                computed_at=_iso(r.computed_at),
+                as_of=r.as_of.isoformat(),
+                conviction=r.conviction,
+                signal_blocked=r.signal_blocked,
+                all_abstained=r.all_abstained,
+            )
+            for r in history.scores
+        ],
+        signals=[
+            SignalPoint(kind=x.kind, conviction=x.conviction, as_of=x.as_of.isoformat())
+            for x in history.signals
+        ],
+    )
 
 
 # --- paper-trading sandbox ---------------------------------------------------------------------
@@ -657,14 +585,6 @@ class NewOrder(BaseModel):
     notional: float | None = Field(default=None, gt=0, le=1e12, allow_inf_nan=False)
 
 
-def _f(x: Decimal | float | None) -> float | None:
-    return None if x is None else float(x)
-
-
-def _iso(dt: datetime | None) -> str | None:
-    return dt.isoformat() if dt else None
-
-
 def _view(v) -> dict:
     p = v.portfolio
     return {
@@ -698,10 +618,6 @@ def _order_out(o) -> OrderOut:
         reason=o.reason,
         signal_id=o.signal_id,
     )
-
-
-def _not_found(exc: NotFound) -> HTTPException:
-    return HTTPException(404, detail=f"unknown {exc.entity} {exc.key}")
 
 
 @app.get("/api/portfolios", response_model=list[PortfolioOut])

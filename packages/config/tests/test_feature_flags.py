@@ -1,4 +1,4 @@
-from fin_core.features import FeatureFlags
+from fin_config import FeatureFlags
 
 
 def test_telegram_disabled_by_default(monkeypatch):

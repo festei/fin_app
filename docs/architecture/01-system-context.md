@@ -38,7 +38,7 @@ flowchart LR
   subgraph c["Containers"]
     web["web<br/>nginx + built React app<br/>basic auth, token injection"]
     api["api<br/>uvicorn fin_api.main:app :8000"]
-    worker["worker<br/>python -m fin_api.worker"]
+    worker["worker<br/>python -m fin_worker"]
     flows["flows<br/>python -m fin_flows.serve"]
     prefect["prefect<br/>server + UI :4200"]
     migrate["migrate<br/>one-shot: alembic upgrade"]

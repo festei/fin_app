@@ -114,7 +114,7 @@ Safety properties:
 
 ```mermaid
 flowchart TB
-  start["python -m fin_api.worker"] --> cfg{"FEATURE_TELEGRAM_ENABLED?"}
+  start["python -m fin_worker"] --> cfg{"FEATURE_TELEGRAM_ENABLED?"}
   cfg -->|no| off["no client, no token needed, zero calls"]
   cfg -->|yes| chk{"TELEGRAM_BOT_TOKEN and<br/>TELEGRAM_CHAT_ID set?"}
   chk -->|no| exit2["exit status 2 (fails loudly)"]

@@ -1,8 +1,8 @@
 """The one place that reads the environment.
 
 Everything the application needs from its surroundings is read here, once, and handed to the
-adapters that need it. Nothing else in the core or the adapters should call ``os.environ``;
-the modules that still do belong to ``fin_core`` and go away with it.
+adapters that need it. Nothing else in the core or the adapters should call ``os.environ``
+(the vendor clients keep an env fallback for their own credentials).
 """
 
 from __future__ import annotations

@@ -6,8 +6,11 @@ from types import TracebackType
 from typing import Self
 
 from sqlalchemy import Engine
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
+from fin_application.errors import StorageUnavailable
+from fin_persistence.catalog import SqlScoreHistoryQuery, SqlSecuritySearchQuery
 from fin_persistence.job_runs import SqlJobRunRepository
 from fin_persistence.market_data import (
     SqlFactRepository,
@@ -45,6 +48,8 @@ class SqlUnitOfWork:
     opportunities: SqlOpportunityQuery
     alert_feed: SqlAlertFeedQuery
     portfolios: SqlPortfolioRepository
+    security_search: SqlSecuritySearchQuery
+    score_history: SqlScoreHistoryQuery
 
     def __init__(self, engine: Engine):
         self._sessions = sessionmaker(engine, expire_on_commit=False)
@@ -72,6 +77,8 @@ class SqlUnitOfWork:
         self.opportunities = SqlOpportunityQuery(self._session)
         self.alert_feed = SqlAlertFeedQuery(self._session)
         self.portfolios = SqlPortfolioRepository(self._session)
+        self.security_search = SqlSecuritySearchQuery(self._session)
+        self.score_history = SqlScoreHistoryQuery(self._session)
         return self
 
     def __exit__(
@@ -86,9 +93,18 @@ class SqlUnitOfWork:
                 session.commit()
             else:
                 session.rollback()
-        except BaseException:
+        except BaseException as failure:
             session.rollback()
+            if isinstance(failure, SQLAlchemyError):
+                raise _unavailable(failure) from None
             raise
+        else:
+            if isinstance(exc, SQLAlchemyError):
+                raise _unavailable(exc) from None
         finally:
             session.close()
             self._session = None
+
+
+def _unavailable(exc: BaseException) -> StorageUnavailable:
+    return StorageUnavailable(f"database unavailable ({type(exc).__name__})")

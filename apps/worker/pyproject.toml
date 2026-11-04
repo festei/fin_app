@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Always-on worker: delivery retries, Telegram bot, single-instance lock."
 requires-python = ">=3.12"
 dependencies = [
+    "fin-application",
     "fin-bootstrap",
 ]
 

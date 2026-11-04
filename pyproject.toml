@@ -6,7 +6,6 @@ dependencies = []
 
 [tool.uv.workspace]
 members = [
-    "packages/core",
     "packages/domain",
     "packages/application",
     "packages/persistence",
@@ -22,7 +21,6 @@ members = [
 ]
 
 [tool.uv.sources]
-fin-core = { workspace = true }
 fin-domain = { workspace = true }
 fin-application = { workspace = true }
 fin-persistence = { workspace = true }
@@ -56,7 +54,6 @@ select = ["E", "F", "I", "UP", "B", "TID251", "DTZ"]
 
 [tool.ruff.lint.isort]
 known-first-party = [
-    "fin_core",
     "fin_domain",
     "fin_application",
     "fin_persistence",
@@ -92,7 +89,6 @@ known-first-party = [
 [tool.ruff.lint.per-file-ignores]
 # the architecture test reads the core's source files, so it may use pathlib
 "packages/domain/tests/test_core_isolation.py" = ["TID251"]
-"packages/core/**" = ["TID251", "DTZ"]
 "packages/persistence/**" = ["TID251", "DTZ"]
 # fixtures are imported by name from db_fixtures.py (see its docstring)
 "packages/persistence/tests/**" = ["TID251", "DTZ", "F811"]
@@ -109,16 +105,16 @@ known-first-party = [
 
 [tool.pytest.ini_options]
 testpaths = [
-    "packages/core/tests",
     "packages/domain/tests",
     "packages/application/tests",
-    "packages/testkit/tests",
     "packages/persistence/tests",
     "packages/providers/tests",
     "packages/telegram/tests",
+    "packages/langgraph/tests",
     "packages/config/tests",
     "packages/bootstrap/tests",
     "apps/api/tests",
+    "apps/worker/tests",
     "flows/tests",
 ]
 asyncio_mode = "auto"
@@ -128,9 +124,8 @@ markers = [
 ]
 
 # --- Architecture boundaries (docs/specs/009-hexagonal-redesign.md) -------------------------------
-# Run with `uv run lint-imports`. Contracts marked RATCHET list today's violations in
-# `ignore_imports`; every migration step deletes the entries it fixes, and the list must reach
-# zero. Never add an entry to make a contract pass.
+# Run with `uv run lint-imports`. A contract that fails means the core is no longer protected: fix
+# the import, never the contract.
 [tool.importlinter]
 root_packages = [
     "fin_domain",
@@ -145,7 +140,6 @@ root_packages = [
     "fin_api",
     "fin_worker",
     "fin_flows",
-    "fin_core",
 ]
 include_external_packages = true
 
@@ -174,8 +168,8 @@ modules = [
 [[tool.importlinter.contracts]]
 name = "Apps reach adapters only through fin_bootstrap"
 type = "forbidden"
-# Direct imports only: until step 6 apps still reach adapters through the legacy fin_core, and
-# the "apps do not import fin_core" ratchet below is what removes those paths.
+# Direct imports only: fin_bootstrap itself imports the adapters (that is its job), so an app
+# reaches them indirectly through it by design.
 allow_indirect_imports = true
 source_modules = ["fin_api", "fin_worker", "fin_flows"]
 forbidden_modules = [
@@ -222,7 +216,6 @@ forbidden_modules = [
     "fin_langgraph",
     "fin_config",
     "fin_bootstrap",
-    "fin_core",
 ]
 
 [[tool.importlinter.contracts]]
@@ -232,27 +225,11 @@ containers = ["fin_domain"]
 layers = ["sandbox", "signals", "scoring", "market_data", "shared"]
 
 [[tool.importlinter.contracts]]
-name = "RATCHET: apps do not import the legacy fin_core"
+name = "The apps do not import the database driver"
 type = "forbidden"
 source_modules = ["fin_api", "fin_worker", "fin_flows"]
-forbidden_modules = ["fin_core"]
-ignore_imports = [
-    "fin_api.main -> fin_core",
-    "fin_api.main -> fin_core.db.models",
-    "fin_api.main -> fin_core.db.repo",
-    "fin_api.main -> fin_core.db.session",
-    "fin_api.main -> fin_core.features",
-]
-
-[[tool.importlinter.contracts]]
-name = "RATCHET: the HTTP app does not import SQLAlchemy"
-type = "forbidden"
-source_modules = ["fin_api"]
-forbidden_modules = ["sqlalchemy"]
+forbidden_modules = ["sqlalchemy", "alembic", "psycopg"]
 allow_indirect_imports = true
-ignore_imports = [
-    "fin_api.main -> sqlalchemy",
-]
 
 [[tool.importlinter.contracts]]
 name = "Production code never imports the test kit"
@@ -269,6 +246,5 @@ source_modules = [
     "fin_api",
     "fin_worker",
     "fin_flows",
-    "fin_core",
 ]
 forbidden_modules = ["fin_testkit"]

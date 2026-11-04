@@ -133,6 +133,34 @@ class OpportunityRow:
     details: ScoreDetails
 
 
+@dataclass(frozen=True)
+class ScorePointRow:
+    """One stored scoring run, without the (large) details: enough to chart conviction."""
+
+    computed_at: datetime | None
+    as_of: datetime
+    conviction: float | None
+    signal_blocked: bool
+    all_abstained: bool
+
+
+@dataclass(frozen=True)
+class SignalPointRow:
+    kind: str
+    conviction: float
+    as_of: datetime
+
+
+class ScoreHistoryQuery(Protocol):
+    def scores(self, ticker: Ticker, since: datetime, limit: int) -> list[ScorePointRow]:
+        """The newest ``limit`` runs computed at or after ``since``, oldest first."""
+        ...
+
+    def signals(self, ticker: Ticker, since: datetime) -> list[SignalPointRow]:
+        """Signals whose ``as_of`` is at or after ``since``, in the order they were raised."""
+        ...
+
+
 class OpportunityQuery(Protocol):
     def top(self, limit: int = 20, newer_than: datetime | None = None) -> list[OpportunityRow]:
         """Latest actionable score per active security, best conviction first. With

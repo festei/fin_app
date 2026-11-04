@@ -38,6 +38,20 @@ class SecurityRepository(Protocol):
         ...
 
 
+class SecuritySearchQuery(Protocol):
+    def search(
+        self,
+        q: str | None = None,
+        sector: str | None = None,
+        kind: str | None = None,
+        limit: int = 50,
+    ) -> list[Security]:
+        """Active securities by ticker prefix or name fragment (case-insensitive, matched
+        literally: ``%``, ``_`` and ``\\`` are ordinary characters), optionally by sector or kind.
+        Ordered by ticker."""
+        ...
+
+
 class PriceRepository(Protocol):
     def upsert(self, ticker: Ticker, bars: Sequence[PriceBar]) -> int:
         """Store bars; a later run overwrites a bar of the same day. Returns bars offered."""
@@ -53,6 +67,10 @@ class PriceRepository(Protocol):
 
     def first_bar_between(self, ticker: Ticker, start: datetime, end: datetime) -> PriceBar | None:
         """The first bar with ``start <= ts <= end``."""
+        ...
+
+    def bars_since(self, ticker: Ticker, since: datetime) -> list[PriceBar]:
+        """Bars at or after ``since``, oldest first. ``NotFound`` for an unknown security."""
         ...
 
     def closes_since(self, ticker: Ticker, since: datetime) -> Mapping[datetime, float]:

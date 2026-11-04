@@ -11,8 +11,10 @@ Not investment advice. See the roadmap and design in the approved plan (phases 0
 
 | Path | What |
 |---|---|
-| `packages/core` | `fin_core`: models, feature flags, providers, LangGraph philosophy graph |
-| `apps/api` | `fin_api`: FastAPI service and the fast-loop worker (placeholder until phase 3) |
+| `packages/domain`, `packages/application` | The protected core: `fin_domain` (rules, stdlib only) and `fin_application` (use cases and ports) |
+| `packages/persistence`, `providers`, `telegram`, `langgraph`, `config` | Adapters: `fin_persistence`, `fin_providers`, `fin_telegram`, `fin_langgraph`, `fin_config` |
+| `packages/bootstrap` | `fin_bootstrap`: `Settings` and the `Container` (composition root) |
+| `apps/api`, `apps/worker` | `fin_api` (FastAPI) and `fin_worker` (Telegram bot, delivery retries) |
 | `apps/web` | React + TypeScript + Vite trading UI |
 | `flows` | Prefect flows for slow batch work |
 | `config` | `features.yml` (feature flags), `philosophies.yml` (thresholds, weights) |
@@ -40,7 +42,7 @@ Postgres works unchanged). The database must be UTF-8 encoded. Config: `DATABASE
 `POSTGRES_USER/PASSWORD/HOST/PORT/DB`.
 
 ```sh
-uv run python -m fin_core.db.migrate upgrade      # apply migrations (also: downgrade, current)
+uv run python -m fin_bootstrap.migrate upgrade      # apply migrations (also: downgrade, current)
 TEST_DATABASE_URL=postgresql+psycopg://user:pw@localhost:5432/fin_test uv run pytest
 ```
 
@@ -50,10 +52,10 @@ at the given date (no look-ahead).
 
 ## Data ingestion (slow cadence)
 
-* `fin_core.providers.edgar`: SEC EDGAR ticker→CIK map and XBRL company facts (needs `SEC_USER_AGENT`).
-* `fin_core.providers.fred`: Treasury yields, curve spread and credit spreads (needs `FRED_API_KEY`).
-* `fin_core.providers.yfinance_provider`: daily price bars (swap in a paid feed behind `PriceProvider`).
-* `fin_core.ingest`: `ingest_fundamentals`, `ingest_prices`, `ingest_yields`; per-ticker/series isolation,
+* `fin_providers.edgar`: SEC EDGAR ticker→CIK map and XBRL company facts (needs `SEC_USER_AGENT`).
+* `fin_providers.fred`: Treasury yields, curve spread and credit spreads (needs `FRED_API_KEY`).
+* `fin_providers.yfinance_provider`: daily price bars (swap in a paid feed behind `PriceProvider`).
+* `fin_application.ingestion`: `IngestFundamentals`, `IngestPrices`, `IngestYields`; per-ticker/series isolation,
   idempotent upserts, back-fill on first run then a short refresh window, one `ingestion_runs` row per job.
 * `flows/fin_flows/ingestion.py`, `scoring.py` and `pipeline.py`: Prefect flows; `python -m fin_flows.serve` serves one chained daily pipeline (ingestion, then scoring) plus manual per-step deployments.
 * Config: `config/universe.yml`, `config/bond_series.yml`.
@@ -78,10 +80,10 @@ RUN_LIVE_TESTS=1 SEC_USER_AGENT="Your Name you@example.com" FRED_API_KEY=... uv 
 
 ## Signals and alerts
 
-Scoring runs as the last step of the daily pipeline (`score-universe` flow, or `fin_core.scoring_run.run_scoring`). Every run is stored in `scores`; a *transition* (conviction crossing the buy or sell line relative to the last actionable stored score) creates a `signals` row, which `config/alerts.yml` turns into an alert: sells only for watchlist stocks, with a cooldown unless conviction moved materially.
+Scoring runs as the last step of the daily pipeline (`score-universe` flow, or `fin_application.scoring_run.RunScoring`). Every run is stored in `scores`; a *transition* (conviction crossing the buy or sell line relative to the last actionable stored score) creates a `signals` row, which `config/alerts.yml` turns into an alert: sells only for watchlist stocks, with a cooldown unless conviction moved materially.
 
 * In-app feed, always on: `GET /api/alerts`, `POST /api/alerts/{id}/read`, `GET /api/opportunities`, `GET|PUT|DELETE /api/watchlist`, `GET /api/channels`, `GET /api/securities` (search), `GET /api/securities/{ticker}/prices` and `/scores` (chart data). The state-changing calls (watchlist PUT/DELETE, mark-as-read) need `Authorization: Bearer $API_TOKEN`; without `API_TOKEN` configured they return 503. `/api/opportunities` ignores scores older than `max_age_days` (default 10).
-* Telegram, **off by default**: set `FEATURE_TELEGRAM_ENABLED=true` plus `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` and run the worker (`python -m fin_api.worker`). Commands: `/watch`, `/unwatch`, `/watchlist`, `/top`, `/why`, `/mute`, `/unmute`, `/help`. Verified only against a mocked Bot API so far.
+* Telegram, **off by default**: set `FEATURE_TELEGRAM_ENABLED=true` plus `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` and run the worker (`python -m fin_worker`). Commands: `/watch`, `/unwatch`, `/watchlist`, `/top`, `/why`, `/mute`, `/unmute`, `/help`. Verified only against a mocked Bot API so far.
 
 ## Feature flags
 

@@ -20,12 +20,12 @@ import pytest
 from graph_compat import build_graph, score_security
 
 from fin_config import load_scoring_config as load_config
-from fin_core.db import repo
-from fin_core.db.session import session_scope
 from fin_domain.market_data import CONCEPT_TAGS
 from fin_domain.scoring import AnnualPoint, SecurityMetrics
 from fin_domain.scoring.guardrails import altman, piotroski
 from fin_langgraph import guardrails_node
+from fin_persistence import repo
+from fin_persistence.session import session_scope
 
 CFG = load_config()
 G = CFG["guardrails"]

@@ -21,9 +21,9 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 from fin_bootstrap import Container, Settings
-from fin_core.db import migrate, repo
-from fin_core.db.session import make_engine, session_scope
 from fin_domain.market_data import CONCEPT_TAGS
+from fin_persistence import migrate, repo
+from fin_persistence.session import make_engine, session_scope
 
 EPS = [1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 2.0, 2.2, 2.5, 2.7]  # oldest first
 DPS = [0.5, 0.5, 0.5, 0.6, 0.6, 0.0, 0.7, 0.7, 0.8, 0.8, 0.9, 1.0, 1.0]

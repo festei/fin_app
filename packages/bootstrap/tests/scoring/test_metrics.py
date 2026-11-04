@@ -10,11 +10,11 @@ import pytest
 from graph_compat import metrics_for as compute_metrics
 from graph_compat import score_security
 
-from fin_core.db import repo
-from fin_core.db.session import session_scope
 from fin_domain.market_data import CONCEPT_TAGS
 from fin_domain.scoring import consecutive_positive_years, earnings_growth
 from fin_domain.shared import NotFound as UnknownSecurityError
+from fin_persistence import repo
+from fin_persistence.session import session_scope
 
 YEARS = list(range(2013, 2025))
 EPS = [1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 2.0, 2.2, 2.5]

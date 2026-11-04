@@ -3,9 +3,9 @@ import pytest
 from prefect.testing.utilities import prefect_test_harness
 
 from fin_bootstrap import Container, Settings
-from fin_core.db import migrate, repo
-from fin_core.db.session import make_engine, session_scope
 from fin_flows import ingestion
+from fin_persistence import migrate, repo
+from fin_persistence.session import make_engine, session_scope
 from fin_providers import FredClient, FredYieldSource
 
 

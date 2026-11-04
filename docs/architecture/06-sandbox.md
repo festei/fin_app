@@ -1,7 +1,7 @@
 # 06: Paper-trading sandbox
 
 A simulation: nothing here touches a broker. Two kinds of portfolio share one engine
-(`fin_core/sandbox/engine.py`).
+(`fin_domain.sandbox.portfolio`).
 
 ## Order lifecycle
 

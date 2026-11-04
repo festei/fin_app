@@ -16,6 +16,7 @@ from fin_application.ports.market_data import (
     FactRepository,
     PriceRepository,
     SecurityRepository,
+    SecuritySearchQuery,
     YieldRepository,
 )
 from fin_application.ports.sandbox import PortfolioRepository
@@ -25,6 +26,7 @@ from fin_application.ports.signals import (
     BotCursorStore,
     ChannelStateRepository,
     OpportunityQuery,
+    ScoreHistoryQuery,
     ScoreRepository,
     SignalRepository,
     WatchlistRepository,
@@ -46,6 +48,8 @@ class UnitOfWork(Protocol):
     opportunities: OpportunityQuery
     alert_feed: AlertFeedQuery
     portfolios: PortfolioRepository
+    security_search: SecuritySearchQuery
+    score_history: ScoreHistoryQuery
 
     def __enter__(self) -> Self: ...
 

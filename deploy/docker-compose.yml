@@ -37,7 +37,7 @@ services:
       context: ..
       dockerfile: deploy/python.Dockerfile
       args: { PACKAGE: fin-api }
-    command: python -m fin_core.db.migrate upgrade
+    command: python -m fin_bootstrap.migrate upgrade
     restart: "no"
     environment: *dbenv
     depends_on: { db: { condition: service_healthy } }
@@ -64,8 +64,8 @@ services:
     build:
       context: ..
       dockerfile: deploy/python.Dockerfile
-      args: { PACKAGE: fin-api }
-    command: python -m fin_api.worker
+      args: { PACKAGE: fin-worker }
+    command: python -m fin_worker
     environment: *dbenv
     depends_on: { migrate: { condition: service_completed_successfully } }
     stop_grace_period: 20s

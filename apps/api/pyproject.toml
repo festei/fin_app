@@ -4,7 +4,6 @@ version = "0.1.0"
 description = "FastAPI service: REST + WebSocket for the trading UI"
 requires-python = ">=3.12"
 dependencies = [
-    "fin-core",
     "fin-application",
     "fin-bootstrap",
     "fin-domain",

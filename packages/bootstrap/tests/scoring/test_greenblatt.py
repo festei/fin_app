@@ -19,11 +19,11 @@ import pytest
 from graph_compat import score_security
 
 from fin_config import load_scoring_config as load_config
-from fin_core.db import repo
-from fin_core.db.session import session_scope
 from fin_domain.market_data import CONCEPT_TAGS
 from fin_domain.scoring import AnnualPoint, ScoreResult, SecurityMetrics
 from fin_domain.scoring.philosophies.greenblatt import score_greenblatt
+from fin_persistence import repo
+from fin_persistence.session import session_scope
 
 CFG = load_config()["greenblatt"]
 FY22, FY23, FY24 = date(2022, 12, 31), date(2023, 12, 31), date(2024, 12, 31)

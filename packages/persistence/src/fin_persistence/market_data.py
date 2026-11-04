@@ -142,6 +142,15 @@ class SqlPriceRepository:
         )
         return _bar(row) if row else None
 
+    def bars_since(self, ticker: Ticker, since: datetime) -> list[PriceBar]:
+        sid = _security_row(self._session, ticker).id
+        rows = self._session.scalars(
+            select(PriceBarRow)
+            .where(PriceBarRow.security_id == sid, PriceBarRow.ts >= since)
+            .order_by(PriceBarRow.ts)
+        )
+        return [_bar(r) for r in rows]
+
     def closes_since(self, ticker: Ticker, since: datetime) -> Mapping[datetime, float]:
         sid = _security_row(self._session, ticker).id
         rows = self._session.execute(

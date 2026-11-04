@@ -58,3 +58,11 @@ def test_web_proxy_adds_the_api_token_and_requires_basic_auth_in_prod():
     assert any(v.startswith("${HTPASSWD_FILE:?") for v in prod["volumes"])
     for compose in (dev, prod):  # web and api must be given the same token variable
         assert "API_TOKEN" in compose["environment"]
+
+
+@pytest.mark.parametrize("compose", ["docker-compose.yml", "docker-compose.prod.yml"])
+def test_the_worker_and_the_migration_run_their_own_packages(compose):
+    modules = python_modules(compose)
+    assert ("worker", "fin_worker") in modules
+    assert ("migrate", "fin_bootstrap.migrate") in modules
+    assert (ROOT / "apps/worker/src/fin_worker/__main__.py").exists()

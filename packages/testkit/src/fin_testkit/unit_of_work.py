@@ -17,6 +17,7 @@ from fin_testkit.market_data import (
     InMemoryFactRepository,
     InMemoryPriceRepository,
     InMemorySecurityRepository,
+    InMemorySecuritySearchQuery,
     InMemoryYieldRepository,
 )
 from fin_testkit.sandbox import InMemoryPortfolioRepository
@@ -26,6 +27,7 @@ from fin_testkit.signals import (
     InMemoryBotCursorStore,
     InMemoryChannelStateRepository,
     InMemoryOpportunityQuery,
+    InMemoryScoreHistoryQuery,
     InMemoryScoreRepository,
     InMemorySignalRepository,
     InMemoryWatchlistRepository,
@@ -128,6 +130,8 @@ class InMemoryUnitOfWork:
         self.watchlist = InMemoryWatchlistRepository(work.watched, work.securities)
         self.channels = InMemoryChannelStateRepository(work.channels)
         self.cursors = InMemoryBotCursorStore(work.cursors)
+        self.security_search = InMemorySecuritySearchQuery(work.securities)
+        self.score_history = InMemoryScoreHistoryQuery(work.scores, work.signals)
         self.opportunities = InMemoryOpportunityQuery(work.scores, work.securities)
         self.alert_feed = InMemoryAlertFeedQuery(work.alerts)
         self.portfolios = InMemoryPortfolioRepository(

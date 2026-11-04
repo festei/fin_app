@@ -1,6 +1,6 @@
 import asyncio
 
-from fin_api.worker import run
+from fin_worker.worker import run
 
 
 async def test_worker_stops_cleanly_on_event():
@@ -18,7 +18,6 @@ import os  # noqa: E402
 import pytest  # noqa: E402
 from sqlalchemy import text  # noqa: E402
 
-from fin_api import worker  # noqa: E402
 from fin_application.alerts import InAppChannel  # noqa: E402
 from fin_application.errors import ChannelConfigError, InstanceAlreadyRunning  # noqa: E402
 from fin_bootstrap import Container, Settings  # noqa: E402
@@ -26,6 +25,7 @@ from fin_config import FeatureFlags  # noqa: E402
 from fin_persistence import make_engine, migrate  # noqa: E402
 from fin_persistence.leader_lock import PgAdvisoryLeaderLock  # noqa: E402
 from fin_telegram import TelegramBot  # noqa: E402
+from fin_worker import worker  # noqa: E402
 
 CREDS = {"TELEGRAM_BOT_TOKEN": "123:SECRET", "TELEGRAM_CHAT_ID": "42"}
 

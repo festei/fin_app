@@ -7,6 +7,7 @@ from fin_testkit.market_data import (
     InMemoryFactRepository,
     InMemoryPriceRepository,
     InMemorySecurityRepository,
+    InMemorySecuritySearchQuery,
     InMemoryYieldRepository,
 )
 from fin_testkit.sandbox import FixedSandboxConfig, InMemoryPortfolioRepository
@@ -17,6 +18,7 @@ from fin_testkit.signals import (
     InMemoryBotCursorStore,
     InMemoryChannelStateRepository,
     InMemoryOpportunityQuery,
+    InMemoryScoreHistoryQuery,
     InMemoryScoreRepository,
     InMemorySignalRepository,
     InMemoryWatchlistRepository,
@@ -51,7 +53,9 @@ __all__ = [
     "InMemoryChannelStateRepository",
     "InMemoryOpportunityQuery",
     "InMemoryPortfolioRepository",
+    "InMemoryScoreHistoryQuery",
     "InMemoryScoreRepository",
+    "InMemorySecuritySearchQuery",
     "InMemorySignalRepository",
     "InMemoryWatchlistRepository",
     "InMemoryFactRepository",

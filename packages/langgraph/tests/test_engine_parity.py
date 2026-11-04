@@ -76,7 +76,7 @@ CASES = {
             "NetIncome": growing(-50, -20),
             "NetCashFromOperating": growing(-30, -10),
             "StockholdersEquity": growing(100, -90),
-            "RetainedEarnings": growing(-100, -150),
+            "RetainedEarnings": growing(-100, -400),  # deep accumulated losses: Z'' < 1.1
             "Liabilities": growing(2800, 200),
             "Assets": growing(2500, 100),
         }
