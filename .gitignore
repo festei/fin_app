@@ -8,3 +8,6 @@ dist/
 .env
 .idea/
 .DS_Store
+
+# personal editor workspaces
+*.code-workspace

@@ -3,6 +3,7 @@ root's job (``fin_bootstrap.settings``)."""
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from urllib.parse import quote
@@ -18,6 +19,9 @@ def postgres_url(
     return (
         f"postgresql+psycopg://{quote(user, safe='')}:{quote(password, safe='')}@{host}:{port}/{db}"
     )
+
+
+log = logging.getLogger(__name__)
 
 
 def make_engine(url: str, connect_timeout: int = 10) -> Engine:
@@ -49,4 +53,7 @@ def ping(engine: Engine) -> None:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
     except Exception as exc:
+        # only the kind goes to the caller (the original can hold connection details); the
+        # original goes to the log
+        log.error("database ping failed (%s)", type(exc).__name__, exc_info=exc)
         raise StorageUnavailable(f"database unavailable ({type(exc).__name__})") from None

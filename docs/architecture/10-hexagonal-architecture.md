@@ -65,7 +65,7 @@ Ports are Protocols in `fin_application.ports`; the domain has none (aggregates 
 
 Concurrency without leaking SQL: a delivery is claimed with an optimistic version check
 (`save_delivery(expected_attempts=...)` raises `ConcurrencyConflict`); a portfolio is locked through
-the repository. A database failure reaches the apps as `StorageUnavailable` (mapped to HTTP 503).
+the repository. A database failure reaches the apps as an application error, never as a SQLAlchemy one: a lost or refused connection is `StorageUnavailable` (HTTP 503), any other database error (a constraint violation, a missing table) is `StorageError` (HTTP 500). The adapter logs the original in full first, because it can hold SQL and connection details that must not reach a caller.
 
 ## How the core is protected
 

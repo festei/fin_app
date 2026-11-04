@@ -5,6 +5,7 @@ import logging
 import os
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from functools import lru_cache
@@ -17,10 +18,11 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from fin_application.errors import StorageUnavailable
+from fin_application.sandbox import PortfolioView
 from fin_application.scoring import Baseline
 from fin_application.scoring import score as score_metrics
 from fin_bootstrap import Container, FeatureFlags, Settings
-from fin_domain.sandbox import OrderError
+from fin_domain.sandbox import Order, OrderError
 from fin_domain.scoring import ScoreResult, SecurityMetrics
 from fin_domain.shared import NotFound
 from fin_domain.signals import Signal
@@ -54,8 +56,8 @@ async def validation_error(_: Request, exc: RequestValidationError) -> JSONRespo
 
 @lru_cache
 def _container() -> Container:
-    """Wiring for the scoring engine and its thresholds; the database is still reached through
-    this module's own session helpers until the HTTP layer moves onto the container."""
+    """The process-wide wiring from the environment. It supplies the scoring engine and the
+    thresholds; the per-database containers of ``_container_for`` share them."""
     return Container.from_environ()
 
 
@@ -121,7 +123,8 @@ def _container_for(url: str) -> Container:
     """The use cases for one database URL. They share the scoring engine and thresholds."""
     if url not in _containers:
         _containers[url] = Container(
-            Settings(database_url=url, db_connect_timeout=3),  # a probe must not hang
+            # every other setting stays as the environment gave it; a probe must not hang
+            replace(Settings.from_environ(), database_url=url, db_connect_timeout=3),
             scoring_engine=_scoring_engine(),
             scoring_config=_container().scoring_config,
         )
@@ -585,7 +588,7 @@ class NewOrder(BaseModel):
     notional: float | None = Field(default=None, gt=0, le=1e12, allow_inf_nan=False)
 
 
-def _view(v) -> dict:
+def _view(v: PortfolioView) -> dict:
     p = v.portfolio
     return {
         "id": p.id,
@@ -602,7 +605,7 @@ def _view(v) -> dict:
     }
 
 
-def _order_out(o) -> OrderOut:
+def _order_out(o: Order) -> OrderOut:
     return OrderOut(
         id=o.id,
         ticker=str(o.ticker),

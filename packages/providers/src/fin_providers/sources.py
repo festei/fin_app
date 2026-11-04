@@ -27,11 +27,20 @@ class EdgarFundamentalsSource:
 
     def ticker_directory(self) -> Mapping[Ticker, CompanyListing]:
         directory: dict[Ticker, CompanyListing] = {}
+        skipped: list[str] = []
         for symbol, info in self._client.ticker_map().items():
             try:
                 directory[Ticker(symbol)] = CompanyListing(info["cik"], info["name"])
             except InvariantViolation:
-                continue  # a listing whose symbol is not a ticker we could ever hold
+                skipped.append(str(symbol))  # a symbol that is not a ticker we could ever hold
+        if skipped:
+            # info, not warning: the list always has some oddities. The count and a sample make a
+            # change of symbol format visible (a sudden jump) without a line per listing.
+            log.info(
+                "skipped %d EDGAR listings whose symbol is not a valid ticker (e.g. %s)",
+                len(skipped),
+                ", ".join(skipped[:5]),
+            )
         return directory
 
     def facts(self, cik: str) -> list[Fact]:

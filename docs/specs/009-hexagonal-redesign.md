@@ -345,3 +345,8 @@ End to end, per step and at the end:
 - Found by the Postgres run: the catalog search expectation assumed binary ordering, but Postgres orders `A-B` and `AAPL` by locale collation. The query is unchanged from the original (same behaviour); the test now accepts either order for that pair.
 - Docs: `docs/architecture/02-repository-map.md` rewritten, `10-hexagonal-architecture.md` added, diagrams 01/05/06/07/08 updated, `CLAUDE.md` and `README.md` describe the new layout.
 
+**Review follow-up (PR #19).**
+- Database errors: `SqlUnitOfWork` and `ping` log the original error with its traceback, then translate it. Connection errors (`OperationalError`, `InterfaceError`) become `StorageUnavailable` (503) with only the kind in the message; every other database error becomes the new `StorageError` (500), whose message is the kind plus the driver's first line (no SQL, no parameters). A constraint violation is no longer reported as an outage, and `ingestion_runs.error` keeps the driver's reason again.
+- `test_core_isolation.py` no longer skips when a package is missing, and a scan that finds no sources fails.
+- Smaller: `fin_api._container_for` uses `dataclasses.replace(Settings.from_environ(), ...)`; `PortfolioView`/`Order` typed in the API; a `ChatBot` port types the worker's bot; `python -m fin_worker` has an `if __name__ == "__main__"` guard; the EDGAR ticker directory logs how many listings it skipped; `felix.code-workspace` removed and `*.code-workspace` ignored; `CLAUDE.md` stale references fixed (and the "only env reader" claim stated precisely).
+- Re-checked the equivalence with `34a2c4e`: the demo seeder gives identical rows in all 14 tables (wall-clock timestamps excluded).

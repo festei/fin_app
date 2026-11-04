@@ -26,7 +26,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 
 from fin_application.errors import ChannelConfigError, InstanceAlreadyRunning
-from fin_application.ports import AlertChannel, SingleInstanceGuard
+from fin_application.ports import AlertChannel, ChatBot, SingleInstanceGuard
 from fin_bootstrap import Container, FeatureFlags, Settings
 
 log = logging.getLogger("fin_worker")
@@ -41,7 +41,7 @@ WorkerAlreadyRunningError = InstanceAlreadyRunning  # the name this error has al
 class WorkerContext:
     container: Container
     channels: list[AlertChannel]
-    bot: object | None = None  # the Telegram bot, when the channel is on
+    bot: ChatBot | None = None  # the Telegram bot, when the channel is on
     lock: SingleInstanceGuard | None = field(default=None, repr=False)
     exit_code: int = 0  # non-zero when the worker stopped itself (e.g. lost leadership)
 
@@ -80,7 +80,7 @@ async def _pause(stop: asyncio.Event, seconds: float) -> None:
         pass
 
 
-async def _bot_loop(bot, stop: asyncio.Event) -> None:
+async def _bot_loop(bot: ChatBot, stop: asyncio.Event) -> None:
     offset: int | None = None
     try:  # resume where the last run stopped, so handled commands are never replayed
         offset = await asyncio.to_thread(bot.load_offset)

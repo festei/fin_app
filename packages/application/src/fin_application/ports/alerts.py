@@ -48,6 +48,19 @@ class AlertChannel(Protocol):
         ...
 
 
+class ChatBot(Protocol):
+    """An inbound command bot (Telegram): long-polls for messages and answers them. The worker
+    drives it without knowing which messenger it is."""
+
+    def load_offset(self) -> int | None:
+        """Where polling resumes (``None`` on a first run or if it cannot be read)."""
+        ...
+
+    def poll_once(self, offset: int | None, timeout: int = 25) -> int | None:
+        """One long-poll round: answer every command, return the next offset."""
+        ...
+
+
 class AlertPolicySource(Protocol):
     def load(self) -> AlertPolicy: ...
 

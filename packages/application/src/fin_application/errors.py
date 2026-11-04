@@ -41,6 +41,14 @@ class InstanceAlreadyRunning(ApplicationError, RuntimeError):
 
 
 class StorageUnavailable(ApplicationError, RuntimeError):
-    """The database could not be reached or answered with an error. Only the kind of error is in
-    the message (``database unavailable (OperationalError)``): the original can hold connection
-    details."""
+    """The database could not be reached (connection refused, timeout, broken connection). Only
+    the kind of error is in the message (``database unavailable (OperationalError)``): the
+    original can hold connection details, and the adapter logs it in full."""
+
+
+class StorageError(ApplicationError, RuntimeError):
+    """The database was reached but an operation failed: a constraint violation, a missing table
+    (migration not applied), bad data. This is a bug or a deployment problem, not an outage, so
+    callers must not treat it as one (the API answers 500, not 503). The message is the error's
+    kind plus the driver's first line (``IntegrityError: UNIQUE constraint failed: ...``), never
+    the SQL statement or its parameters; the original is chained and logged."""

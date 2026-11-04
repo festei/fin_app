@@ -4,6 +4,7 @@ from fin_application.ports.alerts import (
     AlertChannel,
     AlertMessage,
     AlertPolicySource,
+    ChatBot,
     SingleInstanceGuard,
 )
 from fin_application.ports.clock import Clock
@@ -40,6 +41,7 @@ from fin_application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
 
 __all__ = [
     "AlertChannel",
+    "ChatBot",
     "AlertFeedQuery",
     "AlertMessage",
     "AlertPolicySource",

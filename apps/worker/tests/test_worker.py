@@ -214,3 +214,18 @@ def test_a_lost_lock_is_noticed_and_reacquired_or_the_worker_gives_up():
         rival.release()
         for e in (e1, e2, admin):
             e.dispose()
+
+
+def test_importing_the_entry_module_does_not_start_the_worker(monkeypatch):
+    import importlib
+    import runpy
+    import sys
+
+    calls = []
+    monkeypatch.setattr("fin_worker.worker.main", lambda: calls.append("main"))
+    sys.modules.pop("fin_worker.__main__", None)
+    importlib.import_module("fin_worker.__main__")
+    assert calls == []  # importing is not running
+    sys.modules.pop("fin_worker.__main__", None)
+    runpy.run_module("fin_worker", run_name="__main__")
+    assert calls == ["main"]  # `python -m fin_worker` still does

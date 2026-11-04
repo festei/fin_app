@@ -37,6 +37,21 @@ def test_the_ticker_directory_is_keyed_by_domain_tickers(fixture_json):
     assert directory[Ticker("TEST")].name == "Test Corp"
 
 
+def test_listings_with_an_invalid_symbol_are_skipped_and_counted_in_one_log_line(caplog):
+    listings = {
+        "0": {"cik_str": 1, "ticker": "GOOD", "title": "Good Inc"},
+        "1": {"cik_str": 2, "ticker": "bad symbol!", "title": "Bad One"},
+        "2": {"cik_str": 3, "ticker": "", "title": "Empty"},
+    }
+    source = edgar(lambda r: httpx.Response(200, json=listings))
+    with caplog.at_level("INFO", logger="fin_providers.sources"):
+        directory = source.ticker_directory()
+    assert list(directory) == [Ticker("GOOD")]
+    (line,) = [r for r in caplog.records if "EDGAR listings" in r.getMessage()]
+    assert "skipped 2 EDGAR listings" in line.getMessage()
+    assert "BAD SYMBOL!" in line.getMessage()  # a sample (as the client normalises it)
+
+
 def test_company_facts_become_domain_facts(fixture_json):
     source = edgar(lambda r: httpx.Response(200, json=fixture_json("companyfacts_synthetic.json")))
     facts = source.facts("1000001")

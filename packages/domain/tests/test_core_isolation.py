@@ -13,9 +13,12 @@ import re
 import tomllib
 from pathlib import Path
 
+import pytest
+
 PACKAGES = Path(__file__).resolve().parents[2]
 DOMAIN = PACKAGES / "domain"
 APPLICATION = PACKAGES / "application"
+MIN_SOURCE_FILES = 5  # both core packages are far larger; this only catches an empty scan
 
 # Third-party and standard-library modules that mean I/O, a framework or configuration.
 INFRASTRUCTURE = {
@@ -70,8 +73,11 @@ def forbidden_imports(source: str, forbidden: set[str]) -> list[str]:
 
 
 def violations(package_dir: Path, forbidden: set[str]) -> dict[str, list[str]]:
+    sources = sorted((package_dir / "src").rglob("*.py"))
+    # a scan that finds nothing to scan (a renamed or moved package) must fail, not pass
+    assert len(sources) >= MIN_SOURCE_FILES, f"no sources to check under {package_dir}"
     result = {}
-    for path in sorted((package_dir / "src").rglob("*.py")):
+    for path in sources:
         bad = forbidden_imports(path.read_text(), forbidden)
         if bad:
             result[str(path.relative_to(package_dir))] = bad
@@ -92,8 +98,6 @@ def test_domain_declares_no_dependencies():
 
 
 def test_application_depends_on_the_domain_only():
-    if not APPLICATION.exists():
-        return
     assert declared_dependencies(APPLICATION) == ["fin-domain"]
 
 
@@ -102,8 +106,6 @@ def test_domain_source_imports_no_infrastructure_and_nothing_outside_the_core():
 
 
 def test_application_source_imports_no_infrastructure_and_nothing_outside_the_core():
-    if not APPLICATION.exists():
-        return
     assert violations(APPLICATION, INFRASTRUCTURE | OUTSIDE_THE_CORE) == {}
 
 
@@ -120,3 +122,8 @@ def test_checker_flags_what_it_should_and_allows_the_rest():
         "from . import sibling\n"
     )
     assert forbidden_imports(ok, INFRASTRUCTURE | OUTSIDE_THE_CORE) == []
+
+
+def test_the_scan_fails_loudly_when_a_package_cannot_be_found(tmp_path):
+    with pytest.raises(AssertionError, match="no sources to check"):
+        violations(tmp_path / "renamed", INFRASTRUCTURE)
