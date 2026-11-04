@@ -41,13 +41,13 @@ from fin_application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
 
 __all__ = [
     "AlertChannel",
-    "ChatBot",
     "AlertFeedQuery",
     "AlertMessage",
     "AlertPolicySource",
     "AlertRepository",
     "BotCursorStore",
     "ChannelStateRepository",
+    "ChatBot",
     "Clock",
     "CompanyListing",
     "FactRepository",

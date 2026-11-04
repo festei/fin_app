@@ -1,5 +1,6 @@
 """The adapters that turn vendor shapes into domain objects."""
 
+import logging
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
@@ -37,19 +38,43 @@ def test_the_ticker_directory_is_keyed_by_domain_tickers(fixture_json):
     assert directory[Ticker("TEST")].name == "Test Corp"
 
 
-def test_listings_with_an_invalid_symbol_are_skipped_and_counted_in_one_log_line(caplog):
-    listings = {
-        "0": {"cik_str": 1, "ticker": "GOOD", "title": "Good Inc"},
-        "1": {"cik_str": 2, "ticker": "bad symbol!", "title": "Bad One"},
-        "2": {"cik_str": 3, "ticker": "", "title": "Empty"},
-    }
-    source = edgar(lambda r: httpx.Response(200, json=listings))
+def listings(good: int, bad: int) -> dict:
+    rows = {str(i): {"cik_str": i, "ticker": f"G{i}", "title": f"Good {i}"} for i in range(good)}
+    rows.update(
+        {
+            f"b{i}": {"cik_str": 10_000 + i, "ticker": f"bad symbol {i}!", "title": "B"}
+            for i in range(bad)
+        }
+    )
+    return rows
+
+
+def test_a_few_unusable_symbols_are_skipped_and_counted_in_one_info_line(caplog):
+    source = edgar(lambda r: httpx.Response(200, json=listings(good=99, bad=1)))
     with caplog.at_level("INFO", logger="fin_providers.sources"):
         directory = source.ticker_directory()
-    assert list(directory) == [Ticker("GOOD")]
+    assert len(directory) == 99
     (line,) = [r for r in caplog.records if "EDGAR listings" in r.getMessage()]
-    assert "skipped 2 EDGAR listings" in line.getMessage()
-    assert "BAD SYMBOL!" in line.getMessage()  # a sample (as the client normalises it)
+    assert line.levelno == logging.INFO  # routine: the list always has some oddities
+    assert "skipped 1 of 100 EDGAR listings (1.0%)" in line.getMessage()
+    assert "BAD SYMBOL 0!" in line.getMessage()  # a sample (as the client normalises it)
+
+
+def test_a_large_share_of_unusable_symbols_is_a_warning_because_info_is_not_emitted_in_flows(
+    caplog,
+):
+    source = edgar(lambda r: httpx.Response(200, json=listings(good=90, bad=10)))
+    with caplog.at_level("INFO", logger="fin_providers.sources"):
+        source.ticker_directory()
+    (line,) = [r for r in caplog.records if "EDGAR listings" in r.getMessage()]
+    assert line.levelno == logging.WARNING  # 10% skipped: a symbol format change
+
+
+def test_nothing_is_logged_when_every_symbol_is_usable(caplog):
+    source = edgar(lambda r: httpx.Response(200, json=listings(good=5, bad=0)))
+    with caplog.at_level("INFO", logger="fin_providers.sources"):
+        source.ticker_directory()
+    assert not [r for r in caplog.records if "EDGAR listings" in r.getMessage()]
 
 
 def test_company_facts_become_domain_facts(fixture_json):

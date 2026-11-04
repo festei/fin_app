@@ -20,6 +20,10 @@ from fin_providers.yfinance_provider import YFinancePriceProvider
 
 log = logging.getLogger(__name__)
 
+# Share of EDGAR listings with an unusable symbol at which the skip is logged as a WARNING. A
+# heuristic, not a measured baseline: a handful of oddities is normal, 5% is a format change.
+SKIPPED_SHARE_WARNING = 0.05
+
 
 class EdgarFundamentalsSource:
     def __init__(self, client: EdgarClient):
@@ -34,11 +38,18 @@ class EdgarFundamentalsSource:
             except InvariantViolation:
                 skipped.append(str(symbol))  # a symbol that is not a ticker we could ever hold
         if skipped:
-            # info, not warning: the list always has some oddities. The count and a sample make a
-            # change of symbol format visible (a sudden jump) without a line per listing.
-            log.info(
-                "skipped %d EDGAR listings whose symbol is not a valid ticker (e.g. %s)",
+            share = len(skipped) / (len(skipped) + len(directory))
+            # The list always has a few oddities, so a handful is routine (INFO). A large share
+            # means the symbol format changed, which must not go unnoticed: under Prefect only
+            # WARNING and above from library loggers reach the run's log, so that case is one.
+            level = logging.WARNING if share >= SKIPPED_SHARE_WARNING else logging.INFO
+            log.log(
+                level,
+                "skipped %d of %d EDGAR listings (%.1f%%) whose symbol is not a valid ticker "
+                "(e.g. %s)",
                 len(skipped),
+                len(skipped) + len(directory),
+                share * 100,
                 ", ".join(skipped[:5]),
             )
         return directory

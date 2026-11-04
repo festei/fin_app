@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import logging
 from types import TracebackType
 from typing import Self
 
 from sqlalchemy import Engine
-from sqlalchemy.exc import InterfaceError, OperationalError, SQLAlchemyError
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
-from fin_application.errors import StorageError, StorageUnavailable
 from fin_persistence.catalog import SqlScoreHistoryQuery, SqlSecuritySearchQuery
 from fin_persistence.job_runs import SqlJobRunRepository
 from fin_persistence.market_data import (
@@ -30,8 +28,7 @@ from fin_persistence.signals import (
     SqlSignalRepository,
     SqlWatchlistRepository,
 )
-
-log = logging.getLogger(__name__)
+from fin_persistence.storage_errors import translate_storage_error
 
 
 class SqlUnitOfWork:
@@ -107,22 +104,3 @@ class SqlUnitOfWork:
         finally:
             session.close()
             self._session = None
-
-
-# Errors that mean "the database could not be reached or the connection broke"; everything else
-# SQLAlchemy raises (IntegrityError, ProgrammingError, DataError, ...) means the database answered
-# and refused the operation.
-CONNECTIVITY_ERRORS = (OperationalError, InterfaceError)
-
-
-def translate_storage_error(exc: SQLAlchemyError) -> StorageUnavailable | StorageError:
-    """Turn a SQLAlchemy error into an application error, logging the original first.
-
-    The original can hold the SQL, its parameters and connection details, so it goes to the log
-    (with its traceback) and never into the message that callers and API responses see.
-    """
-    log.error("storage error (%s)", type(exc).__name__, exc_info=exc)
-    if isinstance(exc, CONNECTIVITY_ERRORS):
-        return StorageUnavailable(f"database unavailable ({type(exc).__name__})")
-    detail = str(getattr(exc, "orig", None) or exc).strip().splitlines()
-    return StorageError(f"{type(exc).__name__}: {detail[0][:200] if detail else ''}".rstrip(": "))

@@ -48,12 +48,13 @@ def session_scope(engine: Engine) -> Iterator[Session]:
 def ping(engine: Engine) -> None:
     """Raise ``StorageUnavailable`` unless the database answers a trivial query."""
     from fin_application.errors import StorageUnavailable
+    from fin_persistence.storage_errors import log_storage_error
 
     try:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
     except Exception as exc:
         # only the kind goes to the caller (the original can hold connection details); the
-        # original goes to the log
-        log.error("database ping failed (%s)", type(exc).__name__, exc_info=exc)
+        # original goes to the log, as one line for an outage (a probe repeats every few seconds)
+        log_storage_error(exc)
         raise StorageUnavailable(f"database unavailable ({type(exc).__name__})") from None
